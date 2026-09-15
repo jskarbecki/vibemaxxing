@@ -178,7 +178,7 @@
     var name = el('div', 'name', account.alias);
     if (account.active) name.appendChild(el('span', 'badge', 'active'));
     identity.appendChild(name);
-    var who = account.email || account.organization;
+    var who = account.email || account.display_name || account.organization;
     if (who) identity.appendChild(el('div', 'who', who));
     if (account.plan) identity.appendChild(el('div', 'plan', account.plan));
     item.appendChild(identity);
@@ -252,7 +252,10 @@
         if (target.fill.style.width !== width) target.fill.style.width = width;
         // Colour comes from severity alone. "normal" is calm and everything
         // else is elevated — never a percentage threshold we invented.
-        target.fill.dataset.severity = row.severity === 'normal' ? 'normal' : 'warn';
+        // null is absent, not elevated. The TUI and the CLI both treat it as
+        // calm, and three surfaces must not disagree about one envelope.
+        var elevated = row.severity != null && row.severity !== 'normal';
+        target.fill.dataset.severity = elevated ? 'warn' : 'normal';
         target.percent.textContent = known ? row.percent + '%' : '—';
         target.resets.dataset.resetsAt = row.resets_at || '';
       });
@@ -271,7 +274,7 @@
     // into the nodes that already exist, so a page left open for days neither
     // grows nor flickers.
     var shape = JSON.stringify(envelope.accounts.map(function (account) {
-      return [account.alias, account.active, account.email, account.organization,
+      return [account.alias, account.active, account.email, account.display_name, account.organization,
         account.plan, account.state, account.message,
         account.rows.map(function (row) { return row.label; }),
         account.breakdown.length];

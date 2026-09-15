@@ -88,6 +88,10 @@ class MacKeychain:
                 argv,
                 capture_output=True,
                 text=True,
+                # Explicit, not the process locale: write encodes the blob as
+                # UTF-8 into argv, so decoding the read with whatever LANG says
+                # is an asymmetric round trip that mangles any non-ASCII byte.
+                encoding="utf-8",
                 timeout=SECURITY_TIMEOUT_S,
                 check=False,
             )

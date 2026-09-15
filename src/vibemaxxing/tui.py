@@ -16,7 +16,9 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import TYPE_CHECKING, ClassVar, Final
 
 from textual.app import App, ComposeResult
@@ -27,6 +29,7 @@ from textual.widgets import Static
 
 from vibemaxxing import envelope, history, store
 from vibemaxxing.envelope import AccountView
+from vibemaxxing.poll import DASHBOARD_INTERVAL_S
 from vibemaxxing.pool import dry_in
 from vibemaxxing.redact import scrub
 from vibemaxxing.usage import Row
@@ -34,7 +37,8 @@ from vibemaxxing.usage import Row
 if TYPE_CHECKING:  # cli imports tui; the annotation must not import it back.
     from vibemaxxing.cli import Context
 
-REFRESH_S: Final = 60.0
+# The floor is 60 s; the cadence is not. See poll.DASHBOARD_INTERVAL_S.
+REFRESH_S: Final = DASHBOARD_INTERVAL_S
 BAR_WIDTH: Final = 20
 LABEL_WIDTH: Final = 22
 
@@ -140,7 +144,17 @@ class Dashboard(App[None]):
         # None until the first cycle lands: an empty store and a store nobody
         # has read yet say different things, and only one of them is "vibe add".
         self._shapes: list[tuple[str, bool, tuple[str, ...] | None]] | None = None
-        self._conn: sqlite3.Connection
+        # None until on_mount succeeds: a failure to open it must not turn every
+        # later error into an AttributeError that replaces the real cause.
+        self._conn: sqlite3.Connection | None = None
+        # At most one fan-out in flight. Textual's message queue is unbounded, so
+        # a held `r` would otherwise queue an arbitrary number of complete
+        # network fan-outs and the account would draw 429s from its own UI.
+        self._busy = False
+        # Our own executor, not asyncio's shared default: its threads are
+        # non-daemon and asyncio.run joins them at teardown, so `q` would leave
+        # the process alive and unresponsive for the rest of an in-flight fetch.
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vibe-collect")
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="accounts"):
@@ -149,11 +163,16 @@ class Dashboard(App[None]):
 
     async def on_mount(self) -> None:
         self._conn = history.connect(store.history_path(self._ctx.root))
-        await self._refresh_or_report()
+        # The timer first, then the first fetch off the message pump: awaiting the
+        # whole fan-out here leaves a blank window that queues every keystroke,
+        # `q` and ctrl-c included, for as long as the slowest account takes.
         self.set_interval(REFRESH_S, self._tick)
+        self.call_after_refresh(self._tick)
 
     def on_unmount(self) -> None:
-        self._conn.close()
+        self._pool.shutdown(wait=False, cancel_futures=True)
+        if self._conn is not None:
+            self._conn.close()
 
     async def _tick(self) -> None:
         # The only clock read. refresh_cycle takes its time from the Context, so a
@@ -162,6 +181,9 @@ class Dashboard(App[None]):
         await self._refresh_or_report()
 
     async def _refresh_or_report(self) -> None:
+        if self._busy:
+            return
+        self._busy = True
         try:
             await self.refresh_cycle()
         except Exception as exc:
@@ -173,6 +195,8 @@ class Dashboard(App[None]):
                 Content(scrub(f"refresh failed ({type(exc).__name__}) — run: vibe list")),
                 layout=False,
             )
+        finally:
+            self._busy = False
 
     async def action_refresh_now(self) -> None:
         await self._tick()
@@ -182,10 +206,17 @@ class Dashboard(App[None]):
         now_s = ctx.now_s
         # collect() refreshes tokens and fetches usage: off the event loop, or
         # the dashboard stops answering keys for the length of a timeout.
-        views = await asyncio.to_thread(envelope.collect, ctx.root, client=ctx.client, now_s=now_s)
+        views = await asyncio.get_running_loop().run_in_executor(
+            self._pool, partial(envelope.collect, ctx.root, client=ctx.client, now_s=now_s)
+        )
         weeks = envelope.pool_weeks(views)
-        history.record(self._conn, at_s=now_s, pool=weeks)
-        forecast = dry_in(history.samples(self._conn, since_s=now_s - _WINDOW_S))
+        forecast = None
+        if self._conn is not None:
+            # A cycle where an account failed to fetch under-reports the pool;
+            # storing it would read back as a real collapse and poison dry_in.
+            if views and all(view.summary is not None for view in views):
+                history.record(self._conn, at_s=now_s, pool=weeks)
+            forecast = dry_in(history.samples(self._conn, since_s=now_s - _WINDOW_S))
         rebuilt = await self._reshape(views)
         # A panel's height follows its shape, so a cycle that only changes
         # values — a bar, a percent, a reset time — needs no layout pass.

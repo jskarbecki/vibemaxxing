@@ -19,6 +19,9 @@ EXPIRY_BUFFER_MS: Final = 5 * 60 * 1000
 OAUTH_MEMBER: Final = "claudeAiOauth"
 
 _RECOVERY: Final = "vibe add"
+# A blob with no claudeAiOauth member means Claude Code is not logged in here,
+# so telling the user to re-run the command that just failed is dead advice.
+_LOGIN: Final = "claude /login"
 
 
 @dataclass(frozen=True)
@@ -103,7 +106,7 @@ def parse_blob(raw: str) -> Credential:
     if not isinstance(member, dict):
         raise StoreError(
             f"the stored credential blob has no {OAUTH_MEMBER!r} object",
-            _RECOVERY,
+            _LOGIN,
         )
     return parse_credential({str(key): value for key, value in member.items()})
 

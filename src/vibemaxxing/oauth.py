@@ -172,12 +172,17 @@ def refresh(
     # A stash means the last run was interrupted after the server rotated the
     # token. Posting the predecessor again would just earn an invalid_grant.
     successor = store.read_stash(root, alias)
+    # The stash path never claimed, so it must not release: deleting a claim
+    # another process is holding across its POST re-admits a third refresher
+    # carrying the already-spent predecessor.
+    claimed = False
 
     if successor is None:
         if not credential.refresh_token:
             return RefreshOutcome(None, "no_refresh_token")
         if not store.claim_refresh(root, alias, now_s=now_ms / 1000):
             return RefreshOutcome(None, "busy")
+        claimed = True
         try:
             payload = _post_token(
                 client,
@@ -194,24 +199,31 @@ def refresh(
         except NetworkError:
             store.release_refresh(root, alias)
             return RefreshOutcome(None, "transient")
-        store.write_stash(root, alias, successor)
-
+    # A recovered stash is already durable; a freshly POSTed successor is not
+    # until write_stash lands. That write belongs inside the guard: a full disk
+    # there loses the successor entirely, and the server has already killed the
+    # predecessor, so the next run earns invalid_grant -- the exact failure the
+    # stash exists to prevent.
+    stashed = not claimed
     # finally, not a release per branch: read_account raises StoreError or
     # NotFoundError on a corrupt account file, and letting that escape without
     # releasing would wedge the alias at "busy" for the whole claim lease.
     try:
         try:
+            if claimed:
+                store.write_stash(root, alias, successor)
+                stashed = True
             account = store.read_account(root, alias)
             store.write_account(root, replace(account, credential=successor))
         except OSError:
-            # The successor is durable but the account file does not hold it
-            # yet, so the caller may use the credential and must not claim the
-            # account was updated. The stash stays until the next run.
-            return RefreshOutcome(successor, "transient", stashed=True)
+            # The caller may use the credential but must not be told the account
+            # file holds it. `stashed` says whether it survived anywhere at all.
+            return RefreshOutcome(successor, "transient", stashed=stashed)
         store.delete_stash(root, alias)
         return RefreshOutcome(successor, None)
     finally:
-        store.release_refresh(root, alias)
+        if claimed:
+            store.release_refresh(root, alias)
 
 
 def _identity_from_token(payload: Mapping[str, object]) -> Identity:

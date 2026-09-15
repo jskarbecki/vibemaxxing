@@ -13,10 +13,11 @@ from __future__ import annotations
 import base64
 import json
 import sys
+import threading
 import traceback
 from collections import OrderedDict
 from types import TracebackType
-from typing import Final
+from typing import Final, TextIO
 
 REDACTED: Final = "«redacted»"
 MIN_SECRET_LEN: Final = 8
@@ -27,6 +28,11 @@ REGISTRY_MAX: Final = 256
 # a dashboard left open for days is a slow leak; the evicted entries are spent
 # predecessors.
 _registry: OrderedDict[str, tuple[str, ...]] = OrderedDict()
+# The web dashboard answers each request on its own thread, so registration and
+# scrubbing genuinely race: iterating the OrderedDict while another thread
+# inserts raises RuntimeError, and the one place that would surface is
+# socketserver.handle_error -- an output boundary scrub does not cover.
+_lock = threading.Lock()
 
 
 def _forms(value: str) -> tuple[str, ...]:
@@ -42,16 +48,18 @@ def register(value: str) -> None:
     # A short value would match unrelated output and redact the whole page.
     if len(value) < MIN_SECRET_LEN:
         return
-    _registry[value] = _forms(value)
-    _registry.move_to_end(value)
-    while len(_registry) > REGISTRY_MAX:
-        _registry.popitem(last=False)
+    with _lock:
+        _registry[value] = _forms(value)
+        _registry.move_to_end(value)
+        while len(_registry) > REGISTRY_MAX:
+            _registry.popitem(last=False)
 
 
 def scrub(text: str) -> str:
-    if not _registry:
-        return text
-    forms = {form for group in _registry.values() for form in group}
+    with _lock:
+        if not _registry:
+            return text
+        forms = {form for group in _registry.values() for form in group}
     # Longest first: a short form that is a substring of a longer one must not
     # shred the longer one into an unrecognisable partial match.
     for form in sorted(forms, key=len, reverse=True):
@@ -68,6 +76,11 @@ class Secret:
         register(value)
 
     def reveal(self) -> str:
+        # Recency is liveness, not registration order: a token that is still
+        # being used must not be evicted while a spent predecessor survives.
+        with _lock:
+            if self._value in _registry:
+                _registry.move_to_end(self._value)
         return self._value
 
     def __str__(self) -> str:
@@ -88,12 +101,24 @@ class Secret:
         return bool(self._value)
 
 
+def _write(stream: TextIO, text: str) -> None:
+    # Human output carries -- and · and «». On a host whose stdout is not UTF-8
+    # the strict codec turns a successful command into a UnicodeEncodeError
+    # traceback, so unencodable glyphs degrade instead of killing the run.
+    scrubbed = scrub(text)
+    try:
+        stream.write(scrubbed)
+    except UnicodeEncodeError:
+        encoding = stream.encoding or "ascii"
+        stream.write(scrubbed.encode(encoding, "replace").decode(encoding))
+
+
 def out(text: str) -> None:
-    sys.stdout.write(scrub(text))
+    _write(sys.stdout, text)
 
 
 def err(text: str) -> None:
-    sys.stderr.write(scrub(text))
+    _write(sys.stderr, text)
 
 
 def _excepthook(
