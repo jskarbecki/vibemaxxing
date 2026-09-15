@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
-from vibemaxxing import __version__, credentials, envelope, history, oauth, store
+from vibemaxxing import __version__, credentials, envelope, history, oauth, store, tui
 from vibemaxxing.credentials import Credential
 from vibemaxxing.envelope import AccountView
 from vibemaxxing.errors import NeedsLoginError, UsageError, VibeError
@@ -204,6 +204,11 @@ def check_loopback(host: str) -> None:
         )
 
 
+def cmd_dashboard(args: argparse.Namespace, ctx: Context) -> int:
+    # Bare `vibe` opens the dashboard; `vibe --json` stays machine-readable.
+    return cmd_list(args, ctx) if args.json else tui.run(ctx)
+
+
 def cmd_usage(args: argparse.Namespace, ctx: Context) -> int:
     if args.web:
         check_loopback(args.host)
@@ -282,7 +287,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=__version__)
     _add_json(parser)
-    parser.set_defaults(handler=cmd_list, alias=None, web=False)
+    parser.set_defaults(handler=cmd_dashboard, alias=None, web=False)
     subs = parser.add_subparsers(dest="command_name")
 
     add = subs.add_parser("add", help="adopt the current Claude Code login, or log in fresh")
