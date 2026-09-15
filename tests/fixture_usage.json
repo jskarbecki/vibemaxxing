@@ -1,0 +1,24 @@
+{
+  "five_hour": {"utilization": 0.0, "resets_at": "2026-09-15T10:40:00.190984+00:00"},
+  "seven_day": {"utilization": 56.0, "resets_at": "2026-09-19T13:00:00.191007+00:00"},
+  "limits": [
+    {"kind": "session",       "group": "session", "percent": 0,  "severity": "normal",
+     "resets_at": "2026-09-15T10:40:00.190984+00:00", "scope": null, "is_active": false},
+    {"kind": "weekly_all",    "group": "weekly",  "percent": 56, "severity": "normal",
+     "resets_at": "2026-09-19T13:00:00.191007+00:00", "scope": null, "is_active": false},
+    {"kind": "weekly_scoped", "group": "weekly",  "percent": 66, "severity": "normal",
+     "resets_at": "2026-09-19T13:00:00.191199+00:00",
+     "scope": {"model": {"id": null, "display_name": "Fable"}, "surface": null},
+     "is_active": true}
+  ],
+  "seven_day_breakdown": {
+    "as_of": "2026-09-15T07:50:37.215544+00:00",
+    "rows": [{"key": "claude_code", "display_name": "Claude Code", "percent": 100},
+             {"key": "chat", "display_name": "Chats", "percent": 0},
+             {"key": "cowork", "display_name": "Cowork", "percent": 0},
+             {"key": "other", "display_name": "Other", "percent": 0}]
+  },
+  "extra_usage": {"is_enabled": false},
+  "spend": {"percent": 0, "enabled": false},
+  "member_dashboard_available": false
+}
