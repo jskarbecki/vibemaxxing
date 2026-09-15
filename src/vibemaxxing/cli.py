@@ -11,10 +11,11 @@ import webbrowser
 from collections.abc import Callable, Sequence
 from contextlib import closing
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import Final
 
-from vibemaxxing import __version__, credentials, envelope, history, oauth, store, tui
+from vibemaxxing import __version__, credentials, envelope, history, oauth, store, tui, web
 from vibemaxxing.credentials import Credential
 from vibemaxxing.envelope import AccountView
 from vibemaxxing.errors import NeedsLoginError, UsageError, VibeError
@@ -23,8 +24,8 @@ from vibemaxxing.keychain import KeychainPort, default_port
 from vibemaxxing.models import AccountState
 from vibemaxxing.pool import dry_in
 from vibemaxxing.redact import err, install_excepthook, out
+from vibemaxxing.web import LOOPBACK
 
-LOOPBACK: Final = "127.0.0.1"
 DEFAULT_PORT: Final = 8787
 
 
@@ -34,6 +35,9 @@ class Context:
     client: HttpClient
     port: KeychainPort
     now_s: float
+    # A long-lived surface needs a clock, not a snapshot: the dashboard reads this
+    # every cycle. A one-shot command reads now_s and never calls it.
+    clock: Callable[[], float] = time.time
     prompt: Callable[[str], str] = input
     browser: Callable[[str], bool] = webbrowser.open
     argv0: str = field(default="vibe")
@@ -188,7 +192,11 @@ def _collect_and_record(ctx: Context) -> tuple[list[AccountView], float | None]:
 def cmd_list(args: argparse.Namespace, ctx: Context) -> int:
     views, dry = _collect_and_record(ctx)
     _emit(
-        envelope.build(views, now_s=ctx.now_s, dry_in=None),
+        envelope.build(
+            views,
+            now_s=ctx.now_s,
+            dry_in=None if dry is None else timedelta(seconds=dry),
+        ),
         as_json=args.json,
         human=_render_accounts(views, now_s=ctx.now_s, dry=dry),
     )
@@ -210,9 +218,9 @@ def cmd_dashboard(args: argparse.Namespace, ctx: Context) -> int:
 
 
 def cmd_usage(args: argparse.Namespace, ctx: Context) -> int:
-    if args.web:
+    if args.mode == "web":
         check_loopback(args.host)
-        raise VibeError("the web dashboard ships in v0.0.5", "vibe usage --once")
+        return web.serve(ctx, port=args.port)
     return cmd_list(args, ctx)
 
 
@@ -287,7 +295,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=__version__)
     _add_json(parser)
-    parser.set_defaults(handler=cmd_dashboard, alias=None, web=False)
+    parser.set_defaults(handler=cmd_dashboard, alias=None, mode=None)
     subs = parser.add_subparsers(dest="command_name")
 
     add = subs.add_parser("add", help="adopt the current Claude Code login, or log in fresh")
@@ -322,9 +330,10 @@ def build_parser() -> argparse.ArgumentParser:
     rename.set_defaults(handler=cmd_alias)
 
     use = subs.add_parser("usage", help="fetch usage once, or serve the web dashboard")
-    group = use.add_mutually_exclusive_group()
-    group.add_argument("--once", action="store_true", help="fetch once and print")
-    group.add_argument("--web", action="store_true", help="serve the dashboard on loopback")
+    use.add_argument(
+        "mode", nargs="?", choices=["web"], help="omit to fetch once; 'web' serves the dashboard"
+    )
+    use.add_argument("--once", action="store_true", help="fetch once and print")
     use.add_argument("--host", default=LOOPBACK)
     use.add_argument("--port", type=int, default=DEFAULT_PORT)
     _add_json(use)

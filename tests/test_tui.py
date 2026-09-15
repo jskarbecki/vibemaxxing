@@ -172,18 +172,26 @@ async def test_a_failed_poll_reports_itself_and_keeps_the_window(tmp_home: Path)
     root = tmp_home / ".vibemaxxing"
     seed_account(root, "one", active=True)
     client = FakeHttpClient()
-    # HTTPError is not a VibeError, so envelope.collect lets it out: the poll
-    # that draws a 429 must report itself, not take the dashboard down with it.
+    # envelope.collect contains an HTTPError per account, so a 429 on one
+    # account lands in that account's panel with a recovery command and the
+    # other accounts and the window are untouched.
     client.queue(HTTPError(429, b'{"error": "rate_limited"}'))
     ctx = _context(root, client)
 
     app = tui.Dashboard(ctx)
     async with app.run_test() as pilot:
         await pilot.pause()
-        footer = _text(app.query_one("#footer", Static))
+        panel = _text(app.panels["one"])
 
-        assert "refresh failed" in footer
-        assert "run: vibe list" in footer
+        assert "429" in panel
+        assert "run: vibe list" in panel
+        assert app.is_running
+
+        # And the footer's own guard still catches anything collect cannot
+        # classify, rather than letting the dashboard die mid-poll.
+        app._ctx.root = root / "gone"
+        client.queue(HTTPError(500, b""))
+        await app._refresh_or_report()
         assert app.is_running
 
 

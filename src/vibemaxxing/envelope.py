@@ -17,7 +17,7 @@ from typing import Final
 from vibemaxxing import credentials, oauth, store, usage
 from vibemaxxing.credentials import EMPTY_IDENTITY, Credential, Identity
 from vibemaxxing.errors import VibeError
-from vibemaxxing.httpclient import HttpClient
+from vibemaxxing.httpclient import HttpClient, HTTPError
 from vibemaxxing.models import AccountState
 from vibemaxxing.pool import AccountUsage, pool_remaining
 from vibemaxxing.redact import scrub
@@ -114,6 +114,21 @@ def _view(
         return AccountView(
             alias, active, AccountState.ERROR, exc.render(), identity, plan, None, None
         )
+    except HTTPError as exc:
+        # UrllibClient raises HTTPError, which is not a VibeError, on every 4xx and
+        # 5xx -- including the 429 that section 14's own note predicts under a 60 s
+        # floor. Containing it here rather than in each surface is what makes the
+        # CLI, the TUI and the web page behave the same on a bad day.
+        return AccountView(
+            alias,
+            active,
+            AccountState.ERROR,
+            f"the usage endpoint answered HTTP {exc.status} - run: vibe list",
+            identity,
+            plan,
+            None,
+            None,
+        )
     return AccountView(
         alias, active, AccountState.OK, None, identity, plan, usage.summarize(payload), now_s
     )
@@ -137,6 +152,7 @@ def account_entry(view: AccountView) -> dict[str, object]:
         "state": str(view.state),
         "message": view.message,
         "email": view.identity.email,
+        "display_name": view.identity.display_name,
         "organization": view.identity.organization_name,
         "plan": view.plan,
         "updated_at": _iso(view.updated_at),

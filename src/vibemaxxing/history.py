@@ -28,13 +28,15 @@ CREATE TABLE IF NOT EXISTS samples (
 """
 
 
-def connect(path: Path) -> sqlite3.Connection:
+def connect(path: Path, *, check_same_thread: bool = True) -> sqlite3.Connection:
     # The store tree only exists once an account has been written; a dashboard
     # opened before that would otherwise die on a missing directory.
     private_dir(path.parent)
     # sqlite would create the file 0644; every file in the store is 0600.
     create_private_file(path)
-    conn = sqlite3.connect(path)
+    # The web dashboard serves each request on its own thread, so it opens the
+    # one process-wide connection with the check off and serialises with a lock.
+    conn = sqlite3.connect(path, check_same_thread=check_same_thread)
     with closing(conn.cursor()) as cur:
         cur.execute(_SCHEMA)
         # PRAGMA takes no parameter; the value is a module constant, not input.
