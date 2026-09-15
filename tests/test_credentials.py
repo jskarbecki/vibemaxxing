@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+
 from vibemaxxing.credentials import (
     EMPTY_IDENTITY,
     EXPIRY_BUFFER_MS,
@@ -15,7 +16,6 @@ from vibemaxxing.credentials import (
     parse_credential,
     read_claude_identity,
 )
-
 from vibemaxxing.errors import StoreError
 
 LIVE_BLOB = json.dumps(
