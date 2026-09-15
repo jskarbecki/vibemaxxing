@@ -6,6 +6,13 @@ import stat
 from pathlib import Path
 
 import pytest
+
+from tests.fakes import FakeKeychain
+from vibemaxxing import store
+from vibemaxxing.credentials import EMPTY_IDENTITY, Credential
+from vibemaxxing.errors import NotFoundError, StoreError, UsageError
+from vibemaxxing.models import AccountState
+from vibemaxxing.redact import Secret
 from vibemaxxing.store import (
     CLAIM_LEASE_S,
     Account,
@@ -27,13 +34,6 @@ from vibemaxxing.store import (
     write_active,
     write_stash,
 )
-
-from tests.fakes import FakeKeychain
-from vibemaxxing import store
-from vibemaxxing.credentials import EMPTY_IDENTITY, Credential
-from vibemaxxing.errors import NotFoundError, StoreError, UsageError
-from vibemaxxing.models import AccountState
-from vibemaxxing.redact import Secret
 
 
 def make_credential(

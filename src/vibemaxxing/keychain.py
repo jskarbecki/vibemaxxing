@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import getpass
 import os
-import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -21,7 +20,6 @@ from vibemaxxing.errors import VibeError
 CLAUDE_CODE_KEYCHAIN_SERVICE: Final = "Claude Code-credentials"
 SECURITY_BIN: Final = "/usr/bin/security"
 SECURITY_TIMEOUT_S: Final = 10.0
-SECURITY_STDIN_LIMIT: Final = 4000
 SECURITY_ABSENT_CODE: Final = 44
 
 _RECOVERY: Final = "vibe add"
@@ -72,24 +70,26 @@ class MacKeychain:
         return result.stdout[:-1] if result.stdout.endswith("\n") else result.stdout
 
     def write(self, blob: str) -> None:
-        args = [
-            "add-generic-password",
-            "-U",
-            "-a",
-            getpass.getuser(),
-            "-s",
-            CLAUDE_CODE_KEYCHAIN_SERVICE,
-            "-w",
-            blob,
-        ]
-        line = " ".join(shlex.quote(arg) for arg in args)
-        if len(line) <= SECURITY_STDIN_LIMIT:
-            result = self._run([SECURITY_BIN, "-i"], stdin=line + "\n")
-        else:
-            # Real exposure: the token is in argv, visible to `ps`, for the life
-            # of this call. Darwin's `security -i` reads one line into a
-            # 4096-byte buffer and would truncate the blob, which is worse.
-            result = self._run([SECURITY_BIN, *args])
+        # The blob sits in argv, where `ps` exposes it to any local user for the
+        # duration of one exec. That is a real cross-uid exposure and it is the
+        # least bad option measured: `security -i` silently truncates at ~4005
+        # bytes and stores the truncated credential, the promptless `-w` form
+        # truncates at 128, and Security.framework cannot touch an item this
+        # process did not create without a GUI prompt on every switch. A path
+        # that can only corrupt is worse than an exposure that is documented.
+        result = self._run(
+            [
+                SECURITY_BIN,
+                "add-generic-password",
+                "-U",
+                "-a",
+                getpass.getuser(),
+                "-s",
+                CLAUDE_CODE_KEYCHAIN_SERVICE,
+                "-w",
+                blob,
+            ]
+        )
         if result.returncode != 0:
             raise VibeError(
                 f"the macOS Keychain refused to write {CLAUDE_CODE_KEYCHAIN_SERVICE!r} "
@@ -97,13 +97,10 @@ class MacKeychain:
                 _RECOVERY,
             )
 
-    def _run(
-        self, argv: list[str], *, stdin: str | None = None
-    ) -> subprocess.CompletedProcess[str]:
+    def _run(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
         try:
             return subprocess.run(
                 argv,
-                input=stdin,
                 capture_output=True,
                 text=True,
                 timeout=SECURITY_TIMEOUT_S,
