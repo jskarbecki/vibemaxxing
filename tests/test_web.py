@@ -205,8 +205,10 @@ def test_the_page_keeps_the_ported_design_properties() -> None:
     assert len(re.findall(r"#[0-9a-fA-F]{3,8}\b", page)) == 10
     assert "font-variant-numeric: tabular-nums" in page
     assert "prefers-color-scheme: dark" in page
-    assert page.count("transition:") == 1
-    assert "transition: width 240ms cubic-bezier(0.23, 1, 0.32, 1)" in page
+    # One motion in the whole page, plus its opt-out. Nothing else animates.
+    assert page.count("transition:") == 2
+    assert page.count("transition: width 240ms cubic-bezier(0.23, 1, 0.32, 1)") == 1
+    assert page.count("transition: none") == 1
     assert "prefers-reduced-motion" in page
 
 
