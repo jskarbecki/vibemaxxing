@@ -216,3 +216,32 @@ def test_human_output_survives_a_non_utf8_stream() -> None:
     stream = io.TextIOWrapper(io.BytesIO(), encoding="ascii", errors="strict")
     redact._write(stream, "pool 1.5 account-weeks · dry in 5h — «ok»\n")
     stream.flush()
+
+
+def test_the_web_dashboard_fetches_once_per_interval_however_many_tabs() -> None:
+    """memory-and-resource:src/vibemaxxing/web.py:scheduler-never-wired-into-a-surface
+
+    Every tab polls /api/usage on its own timer, so without a cache the request
+    rate is tabs x page-poll-rate and the dashboard had no floor at all.
+    """
+    from vibemaxxing import web
+    from vibemaxxing.poll import DASHBOARD_INTERVAL_S
+
+    calls = 0
+
+    def produce() -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {"schema": 1, "n": calls}
+
+    cache = web._Cache()
+    now = 1000.0
+    for _ in range(20):  # twenty tabs, same instant
+        cache.get(now, produce)
+    assert calls == 1
+
+    cache.get(now + DASHBOARD_INTERVAL_S - 1, produce)
+    assert calls == 1, "still inside the interval"
+
+    cache.get(now + DASHBOARD_INTERVAL_S, produce)
+    assert calls == 2, "the interval lapsed, so one fetch"

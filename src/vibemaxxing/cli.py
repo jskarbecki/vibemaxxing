@@ -75,7 +75,8 @@ def _render_accounts(views: Sequence[AccountView], *, now_s: float, dry: float |
             flag = "" if row.severity in (None, "normal") else f"  ({row.severity})"
             lines.append(f"    {row.label:<24}{percent:>5}{flag}")
         lines.append("")
-    tail = f"pool  {envelope.pool_weeks(views)} account-weeks across {len(views)} accounts"
+    plural = "" if len(views) == 1 else "s"
+    tail = f"pool  {envelope.pool_weeks(views)} account-weeks across {len(views)} account{plural}"
     if dry is not None:
         tail += f"  ·  dry in {dry / 3600:.1f}h"
     lines.append(tail)

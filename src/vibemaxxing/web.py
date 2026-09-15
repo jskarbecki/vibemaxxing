@@ -11,6 +11,7 @@ the bind is ``127.0.0.1`` by construction rather than by a checked option.
 
 from __future__ import annotations
 
+import math
 import threading
 from collections.abc import Callable
 from datetime import timedelta
@@ -22,6 +23,7 @@ from typing import TYPE_CHECKING, Final
 from vibemaxxing import history, store
 from vibemaxxing.envelope import build, collect, dumps, error_payload, pool_weeks
 from vibemaxxing.errors import VibeError
+from vibemaxxing.poll import DASHBOARD_INTERVAL_S
 from vibemaxxing.pool import dry_in
 from vibemaxxing.redact import err
 
@@ -106,6 +108,34 @@ class Recorder:
         self._conn.close()
 
 
+class _Cache:
+    """One fetch per DASHBOARD_INTERVAL_S, however many tabs are open.
+
+    Every browser polls /api/usage on its own timer and ThreadingHTTPServer
+    answers each on its own thread, so without this the request rate is the
+    number of open tabs times the page's poll rate -- the web dashboard had no
+    floor at all. The lock is never held across the fetch: a second request
+    during an in-flight one is served the previous envelope rather than queued
+    behind it.
+    """
+
+    def __init__(self, ttl_s: float = DASHBOARD_INTERVAL_S) -> None:
+        self._ttl_s = ttl_s
+        self._lock = threading.Lock()
+        self._at_s = -math.inf
+        self._envelope: dict[str, object] | None = None
+
+    def get(self, now_s: float, produce: Callable[[], dict[str, object]]) -> dict[str, object]:
+        with self._lock:
+            fresh = self._envelope is not None and now_s - self._at_s < self._ttl_s
+            if fresh and self._envelope is not None:
+                return self._envelope
+        built = produce()
+        with self._lock:
+            self._envelope, self._at_s = built, now_s
+        return built
+
+
 def snapshot(ctx: Context, recorder: Recorder | None = None) -> dict[str, object]:
     # A live clock, not ctx.now_s: this process stays up for days, and a frozen
     # timestamp would evaluate every token's expiry against process start.
@@ -128,7 +158,11 @@ def serve(ctx: Context, *, port: int) -> int:
     try:
         # Inside the guard: a bind failure here would otherwise leak the sqlite
         # connection and escape as a raw traceback.
-        server = build_server(port, envelope=lambda: snapshot(ctx, recorder))
+        cache = _Cache()
+        server = build_server(
+            port,
+            envelope=lambda: cache.get(ctx.clock(), lambda: snapshot(ctx, recorder)),
+        )
         with server:
             err(f"dashboard on http://{LOOPBACK}:{server.server_address[1]} — ctrl-c to stop\n")
             try:
