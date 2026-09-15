@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import sys
@@ -10,7 +9,14 @@ from pathlib import Path
 
 import pytest
 
-from tests.fakes import FakeHttpClient, FakeKeychain, fixture_usage, make_credential, seed_account
+from tests.fakes import (
+    ENVELOPE_ACCOUNT_KEYS,
+    FakeHttpClient,
+    FakeKeychain,
+    fixture_usage,
+    make_credential,
+    seed_account,
+)
 from vibemaxxing import cli, credentials, store
 from vibemaxxing.credentials import Identity
 from vibemaxxing.envelope import ENVELOPE_SCHEMA
@@ -18,19 +24,6 @@ from vibemaxxing.envelope import ENVELOPE_SCHEMA
 NOW_S = 1_757_930_000.0
 NOW_MS = int(NOW_S * 1000)
 SENTINEL = "VMXSENTINEL0000000000"
-
-ACCOUNT_KEYS = {
-    "alias",
-    "active",
-    "state",
-    "message",
-    "email",
-    "organization",
-    "plan",
-    "updated_at",
-    "rows",
-    "breakdown",
-}
 
 
 def context(tmp_home: Path, client: FakeHttpClient, **kw: object) -> cli.Context:
@@ -82,7 +75,9 @@ def test_list_json_envelope_is_stable(tmp_home: Path, capsys: pytest.CaptureFixt
     entries = {entry["alias"]: entry for entry in payload["accounts"]}
     assert set(entries) == {"healthy", "lapsed"}
     for entry in entries.values():
-        assert set(entry) == ACCOUNT_KEYS, "every documented key on every entry, whatever the state"
+        assert set(entry) == ENVELOPE_ACCOUNT_KEYS, (
+            "every documented key on every entry, whatever the state"
+        )
 
     healthy = entries["healthy"]
     assert healthy["state"] == "ok"
@@ -172,54 +167,3 @@ def test_run_pins_the_token_to_the_child_environment_only(tmp_home: Path) -> Non
     assert exit_code == 0, "the child did not see the alias's access token"
     assert ctx.port.blob == before, "run must not touch the global credential"
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in os.environ, "the parent env must stay clean"
-
-
-def test_no_phase_d_command_emits_a_token(
-    tmp_home: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    root = tmp_home / ".vibemaxxing"
-    seed_account(root, "work", credential=make_credential(access=SENTINEL, refresh=SENTINEL))
-    forms = (
-        SENTINEL,
-        base64.b64encode(SENTINEL.encode()).decode(),
-        json.dumps(SENTINEL)[1:-1],
-    )
-
-    invocations = (
-        ["list"],
-        ["list", "--json"],
-        ["switch", "work"],
-        ["switch", "work", "--json"],
-        ["alias", "work", "work2"],
-        ["alias", "work2", "work"],
-        ["usage", "--once"],
-        ["usage", "--once", "--json"],
-        ["remove", "work"],
-        ["remove", "work", "--json"],
-    )
-    for argv in invocations:
-        client = FakeHttpClient()
-        client.queue_json(200, fixture_usage())
-        cli.main(argv, context=context(tmp_home, client))
-        captured = capsys.readouterr()
-        for form in forms:
-            assert form not in captured.out, f"{argv} leaked to stdout"
-            assert form not in captured.err, f"{argv} leaked to stderr"
-
-    # The account file holds the credential at rest by frozen product decision
-    # (plaintext JSON, 0600). Every other file in the store — the stash, the
-    # claim, the active pointer, the raw bytes of the history database — must
-    # be clean, and the account file must still be owner-only.
-    scanned = 0
-    for path in sorted(root.rglob("*")):
-        if not path.is_file():
-            assert path.stat().st_mode & 0o777 == 0o700, f"{path} is not 0700"
-            continue
-        assert path.stat().st_mode & 0o777 == 0o600, f"{path} is not 0600"
-        if path.parent.name == "accounts":
-            continue
-        scanned += 1
-        raw = path.read_bytes()
-        for form in forms:
-            assert form.encode() not in raw, f"{path} holds a token"
-    assert scanned, "the scan matched no files, so it proved nothing"

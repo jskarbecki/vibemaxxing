@@ -124,3 +124,22 @@ def fixture_usage() -> dict[str, object]:
     payload = json.loads(path.read_text())
     assert isinstance(payload, dict)
     return payload
+
+
+# Contract section 10's account entry. One definition, so two surfaces' tests
+# cannot disagree about what the envelope promises.
+ENVELOPE_ACCOUNT_KEYS = frozenset(
+    {
+        "alias",
+        "active",
+        "state",
+        "message",
+        "email",
+        "display_name",
+        "organization",
+        "plan",
+        "updated_at",
+        "rows",
+        "breakdown",
+    }
+)

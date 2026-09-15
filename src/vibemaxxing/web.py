@@ -11,20 +11,25 @@ the bind is ``127.0.0.1`` by construction rather than by a checked option.
 
 from __future__ import annotations
 
-import time
+import threading
 from collections.abc import Callable
+from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
+from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
-from vibemaxxing.envelope import build, collect, dumps, error_payload
+from vibemaxxing import history, store
+from vibemaxxing.envelope import build, collect, dumps, error_payload, pool_weeks
 from vibemaxxing.errors import VibeError
+from vibemaxxing.pool import dry_in
 from vibemaxxing.redact import err
 
 if TYPE_CHECKING:  # cli imports web, so the Context type may only travel one way.
     from vibemaxxing.cli import Context
 
 LOOPBACK: Final = "127.0.0.1"
+_WINDOW_S: Final = history.RETENTION_DAYS * 86_400.0
 NOT_FOUND: Final = "not found\n"
 
 
@@ -79,19 +84,47 @@ def build_server(port: int, *, envelope: Callable[[], dict[str, object]]) -> Thr
     return ThreadingHTTPServer((LOOPBACK, port), Handler)
 
 
-def snapshot(ctx: Context) -> dict[str, object]:
+class Recorder:
+    """The one history connection this process owns.
+
+    ThreadingHTTPServer answers each request on its own thread, so the connection
+    is opened with sqlite's same-thread check off and every use is serialised
+    here. The lock never covers the usage fetch — only the two sqlite calls.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._conn = history.connect(path, check_same_thread=False)
+        self._lock = threading.Lock()
+
+    def record(self, *, at_s: float, weeks: float) -> timedelta | None:
+        with self._lock:
+            history.record(self._conn, at_s=at_s, pool=weeks)
+            window = history.samples(self._conn, since_s=at_s - _WINDOW_S)
+        return dry_in(window)
+
+    def close(self) -> None:
+        self._conn.close()
+
+
+def snapshot(ctx: Context, recorder: Recorder | None = None) -> dict[str, object]:
     # A live clock, not ctx.now_s: this process stays up for days, and a frozen
     # timestamp would evaluate every token's expiry against process start.
-    now_s = time.time()
-    return build(collect(ctx.root, client=ctx.client, now_s=now_s), now_s=now_s)
+    now_s = ctx.clock()
+    views = collect(ctx.root, client=ctx.client, now_s=now_s)
+    forecast = None if recorder is None else recorder.record(at_s=now_s, weeks=pool_weeks(views))
+    return build(views, now_s=now_s, dry_in=forecast)
 
 
 def serve(ctx: Context, *, port: int) -> int:
-    server = build_server(port, envelope=lambda: snapshot(ctx))
-    with server:
-        err(f"dashboard on http://{LOOPBACK}:{server.server_address[1]} — ctrl-c to stop\n")
-        try:
-            server.serve_forever()
-        except KeyboardInterrupt:
-            err("\nstopped\n")
+    recorder = Recorder(store.history_path(ctx.root))
+    server = build_server(port, envelope=lambda: snapshot(ctx, recorder))
+    try:
+        with server:
+            err(f"dashboard on http://{LOOPBACK}:{server.server_address[1]} — ctrl-c to stop\n")
+            try:
+                server.serve_forever()
+            except KeyboardInterrupt:
+                err("\nstopped\n")
+    finally:
+        recorder.close()
     return 0

@@ -634,6 +634,7 @@ schema. AC17 pins it.
       "state": "ok",
       "message": null,
       "email": "jan@intra-ai.de",
+      "display_name": "Jan",
       "organization": "Intra AI",
       "plan": "max",
       "updated_at": "2026-09-15T10:39:12+00:00",
@@ -649,6 +650,7 @@ schema. AC17 pins it.
       "state": "needs_login",
       "message": "login lapsed for \"old\" — run: vibe add old",
       "email": "other@example.com",
+      "display_name": null,
       "organization": null,
       "plan": null,
       "updated_at": null,
@@ -665,7 +667,13 @@ schema. AC17 pins it.
 ```
 
 **Every documented key is present on every entry**, whatever the state — absent data is
-`null` or `[]`, never a missing key. A `needs_login` entry's `message` contains the
+`null` or `[]`, never a missing key. The single list of those keys lives in
+`tests/fakes.py` as `ENVELOPE_ACCOUNT_KEYS`, so the CLI's and the web dashboard's tests
+cannot disagree about what the envelope promises.
+
+`display_name` was added in Phase E: the surfaces fall back `email` → `display_name` →
+`alias` for the who-line, and without it in the envelope the web page could only fall back
+to the alias while the TUI, which renders from the typed objects, could do better. A `needs_login` entry's `message` contains the
 literal string `vibe add`.
 
 No token value appears in this document, in any form, ever. The `--json` dumper runs
@@ -711,6 +719,11 @@ is a hard error: `UsageError` naming loopback, exit `2` (AC13).
 | GET | `/api/usage` | 200 | `application/json` | the §10 envelope |
 | GET | `/api/usage` | 500 | `application/json` | `{"schema":1,"error":{…}}` |
 | GET | anything else | 404 | `text/plain; charset=utf-8` | `not found\n` |
+
+`ThreadingHTTPServer` answers each request on its own thread, so the process-wide history
+connection is opened with `check_same_thread=False` and every use is serialised by
+`web.Recorder`'s lock. **That lock never covers the usage fetch** — only the two sqlite
+calls — which is the same rule as §9's consume gate.
 
 No other route. No authentication, no TLS — both out of scope, and both are why the
 bind is loopback-only. `Cache-Control: no-store` on every response.
@@ -760,6 +773,13 @@ class Summary:
 
 def summarize(payload: Mapping[str, object]) -> Summary: ...
 ```
+
+`envelope.collect` contains **both** failure kinds per account: `VibeError`, and
+`httpclient.HTTPError`, which is not a `VibeError` and is what `UrllibClient` raises on
+every 4xx and 5xx — including the 429 §14's own note predicts under a 60 s floor.
+Containing it in `collect` rather than in each surface is what makes `vibe list`, the TUI
+and the web page behave identically on a bad day; before Phase E it escaped `collect` and
+`vibe list` died on a traceback instead of an exit code.
 
 `fetch_usage` sends `Authorization: Bearer <token>` and `anthropic-beta: oauth-2025-04-20`,
 and nothing else. Measured 2026-09-15: those two headers alone return
@@ -836,7 +856,8 @@ SCHEMA_VERSION: Final = 1
 RETENTION_DAYS: Final = 90
 SAMPLE_LIMIT: Final = 2000          # bounded read; dry_in needs oldest + newest only
 
-def connect(path: Path) -> sqlite3.Connection: ...      # creates 0600, applies schema
+def connect(path: Path, *,
+            check_same_thread: bool = True) -> sqlite3.Connection: ...  # 0600, applies schema
 def record(conn: sqlite3.Connection, *, at_s: float, pool: float) -> None: ...
 def prune(conn: sqlite3.Connection, *, now_s: float,
           retention_days: int = RETENTION_DAYS) -> int: ...     # returns rows deleted
@@ -850,6 +871,23 @@ per process, not per refresh.
 
 **No token value, in any form, is ever written to this database.** AC12 scans its raw
 bytes.
+
+`connect` creates its parent directory `0700` and the file `0600` before sqlite touches
+it — sqlite would create the file `0644`, and the store tree does not exist until an
+account has been written, so a dashboard opened on a fresh machine would otherwise die on
+a missing directory.
+
+### AC12's one exemption, settled with the owner 2026-09-15
+
+AC12 says the sentinel must appear in "no byte of ... any file under the temp
+`~/.vibemaxxing`". Taken literally that is unsatisfiable: the frozen at-rest decision
+stores the credential as plaintext JSON in `accounts/<alias>.json`, so seeding the store
+with the sentinel as the access token puts it there by construction. The owner settled it:
+**`accounts/*.json` is the single exemption**, and the test additionally asserts it is
+`0600`. Everything else is scanned — the stash, the claim, the active pointer, the raw
+bytes of `history.db`, both streams, and the forced tracebacks. The stash check stays
+meaningful because a stash only ever holds a server-issued successor, so the seeded
+sentinel appearing there would be a real bug.
 
 ---
 
@@ -908,6 +946,16 @@ vibe alias <old> <new> [--json]
 vibe usage --once [--json]
 vibe usage web [--host 127.0.0.1] [--port N]
 ```
+
+`web` is a positional, which is what AC13 is literally written against. `--json` on `run`
+must precede the alias (`vibe run --json work -- claude`): everything after the alias is
+the child's, by `argparse.REMAINDER`.
+
+`Context` carries a `clock: Callable[[], float] = time.time` alongside `now_s`. A one-shot
+command reads `now_s` and never calls the clock; the two surfaces that stay up for days
+read the clock each cycle. Without it the web dashboard would evaluate every token's
+expiry against process start, and neither long-lived surface could be driven by a fake
+clock in a test.
 
 `--json` is accepted on every command that reports state. It emits the §10 envelope on
 success and the §10 error envelope on failure, and it is the only output on stdout.

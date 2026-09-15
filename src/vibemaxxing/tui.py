@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-import time
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, ClassVar, Final
@@ -157,9 +156,9 @@ class Dashboard(App[None]):
         self._conn.close()
 
     async def _tick(self) -> None:
-        # The only wall-clock read. refresh_cycle takes its time from the
-        # Context, so a test drives it as fast as it likes without sleeping.
-        self._ctx.now_s = time.time()
+        # The only clock read. refresh_cycle takes its time from the Context, so a
+        # test drives it as fast as it likes without sleeping.
+        self._ctx.now_s = self._ctx.clock()
         await self._refresh_or_report()
 
     async def _refresh_or_report(self) -> None:

@@ -17,7 +17,13 @@ from pathlib import Path
 
 import pytest
 
-from tests.fakes import FakeHttpClient, FakeKeychain, fixture_usage, seed_account
+from tests.fakes import (
+    ENVELOPE_ACCOUNT_KEYS,
+    FakeHttpClient,
+    FakeKeychain,
+    fixture_usage,
+    seed_account,
+)
 from vibemaxxing import cli, envelope, web
 from vibemaxxing.envelope import ENVELOPE_SCHEMA
 from vibemaxxing.errors import VibeError
@@ -26,19 +32,6 @@ from vibemaxxing.redact import REDACTED, Secret
 NOW_S = 1_757_930_000.0
 SENTINEL = "VMXWEBSENTINEL0000000"
 LOOPBACK = "127.0.0.1"
-
-ACCOUNT_KEYS = {
-    "alias",
-    "active",
-    "state",
-    "message",
-    "email",
-    "organization",
-    "plan",
-    "updated_at",
-    "rows",
-    "breakdown",
-}
 
 
 @contextmanager
@@ -106,7 +99,7 @@ def test_web_binds_loopback_and_refuses_other_hosts(
     with running(lambda: {"schema": ENVELOPE_SCHEMA}) as server:
         assert server.socket.getsockname()[0] == LOOPBACK
 
-    assert cli.main(["usage", "--web", "--host", "0.0.0.0"], context=context(tmp_home)) == 2
+    assert cli.main(["usage", "web", "--host", "0.0.0.0"], context=context(tmp_home)) == 2
     assert "loopback" in capsys.readouterr().err
 
 
@@ -135,7 +128,7 @@ def test_api_usage_serves_the_section_10_envelope(tmp_home: Path) -> None:
     assert payload == json.loads(envelope.dumps(expected))
     assert payload["schema"] == ENVELOPE_SCHEMA
     assert set(payload["pool"]) == {"accounts", "remaining_account_weeks", "dry_in_seconds"}
-    assert set(payload["accounts"][0]) == ACCOUNT_KEYS
+    assert set(payload["accounts"][0]) == ENVELOPE_ACCOUNT_KEYS
 
 
 def test_unknown_path_is_404(tmp_home: Path) -> None:
@@ -227,6 +220,6 @@ def test_snapshot_is_the_section_10_envelope(tmp_home: Path) -> None:
     assert payload["schema"] == ENVELOPE_SCHEMA
     accounts = payload["accounts"]
     assert isinstance(accounts, list)
-    assert set(accounts[0]) == ACCOUNT_KEYS
+    assert set(accounts[0]) == ENVELOPE_ACCOUNT_KEYS
     assert accounts[0]["alias"] == "work"
     assert accounts[0]["active"] is True
