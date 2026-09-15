@@ -58,6 +58,10 @@ def guard_live_paths(request: pytest.FixtureRequest) -> Iterator[None]:
     node_id = request.node.nodeid
     real_open, real_os_open = builtins.open, os.open
     real_connect, real_run, real_popen = sqlite3.connect, subprocess.run, subprocess.Popen
+    # Path.read_text/write_text/read_bytes all funnel through Path.open, which
+    # calls io.open directly rather than builtins.open -- so patching builtins
+    # alone let a test read the real ~/.claude.json. Verified before this fix.
+    real_path_open = Path.open
 
     def guarded_open(file, *args, **kwargs):
         _check_path(file, node_id)
@@ -71,6 +75,10 @@ def guard_live_paths(request: pytest.FixtureRequest) -> Iterator[None]:
         _check_path(database, node_id)
         return real_connect(database, *args, **kwargs)
 
+    def guarded_path_open(self, *args, **kwargs):
+        _check_path(self, node_id)
+        return real_path_open(self, *args, **kwargs)
+
     def guarded_run(args, *rest, **kwargs):
         _check_argv(args, node_id)
         return real_run(args, *rest, **kwargs)
@@ -81,12 +89,14 @@ def guard_live_paths(request: pytest.FixtureRequest) -> Iterator[None]:
 
     builtins.open = guarded_open
     os.open = guarded_os_open
+    Path.open = guarded_path_open  # type: ignore[method-assign]
     sqlite3.connect = guarded_connect
     subprocess.run = guarded_run
     subprocess.Popen = guarded_popen
     try:
         yield
     finally:
+        Path.open = real_path_open  # type: ignore[method-assign]
         builtins.open, os.open = real_open, real_os_open
         sqlite3.connect, subprocess.run, subprocess.Popen = real_connect, real_run, real_popen
 

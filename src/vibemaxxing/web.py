@@ -111,14 +111,24 @@ def snapshot(ctx: Context, recorder: Recorder | None = None) -> dict[str, object
     # timestamp would evaluate every token's expiry against process start.
     now_s = ctx.clock()
     views = collect(ctx.root, client=ctx.client, now_s=now_s)
-    forecast = None if recorder is None else recorder.record(at_s=now_s, weeks=pool_weeks(views))
+    # A cycle where an account failed to fetch reports a pool that is missing
+    # that account's headroom. Recording it would store a transient 429 as a
+    # genuine collapse and poison dry_in for as long as it stays in the window.
+    complete = bool(views) and all(view.summary is not None for view in views)
+    forecast = (
+        recorder.record(at_s=now_s, weeks=pool_weeks(views))
+        if recorder is not None and complete
+        else None
+    )
     return build(views, now_s=now_s, dry_in=forecast)
 
 
 def serve(ctx: Context, *, port: int) -> int:
     recorder = Recorder(store.history_path(ctx.root))
-    server = build_server(port, envelope=lambda: snapshot(ctx, recorder))
     try:
+        # Inside the guard: a bind failure here would otherwise leak the sqlite
+        # connection and escape as a raw traceback.
+        server = build_server(port, envelope=lambda: snapshot(ctx, recorder))
         with server:
             err(f"dashboard on http://{LOOPBACK}:{server.server_address[1]} — ctrl-c to stop\n")
             try:

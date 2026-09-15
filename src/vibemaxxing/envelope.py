@@ -99,7 +99,15 @@ def _view(
     identity = _claude_identity(account.identity) if active else account.identity
     plan = account.credential.subscription_type
 
-    credential, message = _usable_credential(root, alias, account.credential, client, now_ms)
+    try:
+        # Inside the guard: read_stash on an unreadable or unknown-schema stash
+        # raises StoreError, and one broken account must not blank every other
+        # account's view.
+        credential, message = _usable_credential(root, alias, account.credential, client, now_ms)
+    except VibeError as exc:
+        return AccountView(
+            alias, active, AccountState.ERROR, exc.render(), identity, plan, None, None
+        )
     if credential is None:
         dead = message is not None and "vibe add" in message
         state = AccountState.NEEDS_LOGIN if dead else AccountState.ERROR

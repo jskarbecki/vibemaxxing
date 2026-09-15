@@ -59,6 +59,32 @@ class HttpClient(Protocol):
     ) -> HttpResponse: ...
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse every 3xx.
+
+    urllib's default opener follows a redirect and re-sends the Authorization
+    header to whatever host the upstream names -- verified on loopback: a 302
+    delivered `Bearer <token>` to a second server that was never compared
+    against ALLOWED_HOSTS, and the caller still saw a clean 200. The allowlist
+    is worthless if it only covers the first hop, and none of the three
+    endpoints we speak to has any reason to redirect.
+    """
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: object,
+        code: int,
+        msg: str,
+        headers: object,
+        newurl: str,
+    ) -> None:
+        return None
+
+
+_OPENER: Final = urllib.request.build_opener(_NoRedirect)
+
+
 class UrllibClient:
     def request(
         self,
@@ -78,7 +104,7 @@ class UrllibClient:
             )
         request = urllib.request.Request(url, data=body, headers=dict(headers), method=method)
         try:
-            with urllib.request.urlopen(request, timeout=timeout_s) as response:
+            with _OPENER.open(request, timeout=timeout_s) as response:
                 return HttpResponse(int(response.status), response.read())
         except urllib.error.HTTPError as exc:
             # `from None`: the suppressed context holds the request object, whose

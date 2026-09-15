@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import os
 import subprocess
+import sys
 import time
 import webbrowser
 from collections.abc import Callable, Sequence
@@ -18,7 +19,7 @@ from typing import Final
 from vibemaxxing import __version__, credentials, envelope, history, oauth, store, tui, web
 from vibemaxxing.credentials import Credential
 from vibemaxxing.envelope import AccountView
-from vibemaxxing.errors import NeedsLoginError, UsageError, VibeError
+from vibemaxxing.errors import NeedsLoginError, NetworkError, UsageError, VibeError
 from vibemaxxing.httpclient import HttpClient, UrllibClient
 from vibemaxxing.keychain import KeychainPort, default_port
 from vibemaxxing.models import AccountState
@@ -93,8 +94,10 @@ def _action(action: str, **fields: object) -> dict[str, object]:
 
 
 def _slug(text: str) -> str:
-    kept = [c if (c.isalnum() or c in "._-") else "-" for c in text]
-    slug = "".join(kept).strip("-.")
+    # Lower case and strip the leading punctuation store.valid_alias rejects, so
+    # an email local part like "_Jan.S" cannot make a bare `vibe add` abort.
+    kept = [c if (c.isalnum() or c in "._-") else "-" for c in text.lower()]
+    slug = "".join(kept).strip("-._")
     return slug[:64] or "account"
 
 
@@ -109,6 +112,17 @@ def _free_alias(root: Path, wanted: str) -> str:
     raise UsageError(f'too many accounts named like "{wanted}"', "vibe list")
 
 
+def _already_stored(root: Path, credential: Credential) -> str | None:
+    wanted = credential.refresh_token
+    for alias in store.list_aliases(root):
+        try:
+            if store.read_account(root, alias).credential.refresh_token == wanted:
+                return alias
+        except VibeError:
+            continue  # a broken account file must not block an adopt
+    return None
+
+
 def _adopt(ctx: Context, as_json: bool) -> int:
     blob = ctx.port.read()
     if blob is None:
@@ -117,6 +131,16 @@ def _adopt(ctx: Context, as_json: bool) -> int:
             "claude /login",
         )
     credential = credentials.parse_blob(blob)
+    existing = _already_stored(ctx.root, credential)
+    if existing is not None:
+        # Adopting twice would put one refresh token in two account files, and
+        # the first rotation under either alias silently kills the other.
+        _emit(
+            _action("add", alias=existing, adopted=True),
+            as_json=as_json,
+            human=f'that login is already stored as "{existing}"\n',
+        )
+        return 0
     identity = credentials.read_claude_identity(Path.home() / ".claude.json")
     base = identity.email or identity.display_name or "account"
     alias = _free_alias(ctx.root, _slug(base.split("@", 1)[0]))
@@ -148,13 +172,23 @@ def _login(ctx: Context, alias: str, as_json: bool) -> int:
         )
     verifier, state = oauth.new_verifier(), oauth.new_state()
     url = oauth.build_authorize_url(verifier, state)
-    ctx.browser(url)
-    err(f"opening {url}\n\nif the browser did not open, paste that URL yourself.\n")
-    paste = ctx.prompt("paste the code shown in the browser: ").strip()
+    # URL first, then the browser. On Linux, CPython registers text-mode console
+    # browsers whenever TERM is set and GenericBrowser.open waits for the child,
+    # so a headless login hands the terminal to lynx and blocks there -- with the
+    # URL never printed, because printing came after the call.
+    err(f"open this to log in:\n\n{url}\n\n")
+    if sys.platform == "darwin" or os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+        ctx.browser(url)
+    # The prompt goes to stderr: with --json, stdout must be the envelope alone.
+    err("paste the code shown in the browser: ")
+    paste = ctx.prompt("").strip()
     code, _ = oauth.parse_pasted_code(paste, state)
     credential, identity = oauth.exchange_code(
         ctx.client, code=code, verifier=verifier, state=state
     )
+    # A stash from the previous lineage would be consumed as a successor by the
+    # next refresh, destroying the credential this login just issued.
+    store.delete_stash(ctx.root, alias)
     store.write_account(
         ctx.root,
         store.Account(
@@ -208,17 +242,29 @@ def check_loopback(host: str) -> None:
         raise UsageError(
             f"--host {host} is refused: the dashboard binds loopback ({LOOPBACK}) only, "
             "because it has no authentication and no TLS",
-            f"vibe usage --web --host {LOOPBACK}",
+            f"vibe usage web --host {LOOPBACK}",
         )
 
 
 def cmd_dashboard(args: argparse.Namespace, ctx: Context) -> int:
+    if not args.json and not sys.stdin.isatty():
+        # Textual would take the alt screen and wait forever for input that is
+        # never coming: ssh without -t, cron, a pipeline, a CI step.
+        raise UsageError(
+            "the dashboard needs a terminal, and stdin is not one",
+            "vibe list",
+        )
     # Bare `vibe` opens the dashboard; `vibe --json` stays machine-readable.
     return cmd_list(args, ctx) if args.json else tui.run(ctx)
 
 
 def cmd_usage(args: argparse.Namespace, ctx: Context) -> int:
     if args.mode == "web":
+        if args.once:
+            raise UsageError(
+                "vibe usage web serves continuously; --once fetches and exits",
+                "vibe usage --once",
+            )
         check_loopback(args.host)
         return web.serve(ctx, port=args.port)
     return cmd_list(args, ctx)
@@ -262,20 +308,34 @@ def _fresh_token(ctx: Context, alias: str) -> Credential:
     if not credentials.is_expired(account.credential, now_ms=now_ms):
         return account.credential
     outcome = oauth.refresh(ctx.root, alias, account.credential, ctx.client, now_ms=now_ms)
-    if outcome.credential is None:
-        raise NeedsLoginError(f'could not refresh "{alias}" ({outcome.error})', f"vibe add {alias}")
-    return outcome.credential
+    if outcome.credential is not None:
+        return outcome.credential
+    if outcome.error in ("invalid_grant", "no_refresh_token"):
+        raise NeedsLoginError(f'the refresh token for "{alias}" is dead', f"vibe add {alias}")
+    # transient, busy, invalid_client: the login is fine, the attempt was not, so
+    # sending the user to a browser login here would be wrong advice.
+    raise NetworkError(
+        f'could not refresh "{alias}" right now ({outcome.error})',
+        f"vibe run {alias} -- ...",
+    )
 
 
 def cmd_run(args: argparse.Namespace, ctx: Context) -> int:
-    command = [part for part in args.command if part != "--"]
+    # Only the leading separator is ours; a `--` the child itself needs must
+    # survive into its argv.
+    command = args.command[1:] if args.command[:1] == ["--"] else list(args.command)
     if not command:
         raise UsageError("vibe run needs a command after --", "vibe run work -- claude")
     credential = _fresh_token(ctx, args.alias)
     # The fifth and last permitted reveal() site: the child's environment. The
     # global Keychain credential is untouched, so other shells keep their account.
     child_env = {**os.environ, "CLAUDE_CODE_OAUTH_TOKEN": credential.access_token.reveal()}
-    completed = subprocess.run(command, env=child_env, check=False)
+    try:
+        completed = subprocess.run(command, env=child_env, check=False)
+    except KeyboardInterrupt:
+        # The child got the same SIGINT and is already shutting down. Report
+        # the conventional 130 rather than a traceback from the wrapper.
+        return 130
     if args.json:
         out(envelope.dumps(_action("run", alias=args.alias, exit_code=completed.returncode)) + "\n")
     return completed.returncode
@@ -284,8 +344,16 @@ def cmd_run(args: argparse.Namespace, ctx: Context) -> int:
 # --- parser ------------------------------------------------------------------
 
 
-def _add_json(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--json", action="store_true", help="emit the machine-readable envelope")
+def _add_json(parser: argparse.ArgumentParser, *, root: bool = False) -> None:
+    # Only the root parser carries a default. A subparser default would overwrite
+    # `vibe --json list` back to False after the root had already set it, so the
+    # caller asked for JSON and silently got human text.
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        default=False if root else argparse.SUPPRESS,
+        help="emit the machine-readable envelope",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -294,7 +362,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Manage several Claude Code accounts and see pooled plan usage.",
     )
     parser.add_argument("--version", action="version", version=__version__)
-    _add_json(parser)
+    _add_json(parser, root=True)
     parser.set_defaults(handler=cmd_dashboard, alias=None, mode=None)
     subs = parser.add_subparsers(dest="command_name")
 
@@ -333,7 +401,9 @@ def build_parser() -> argparse.ArgumentParser:
     use.add_argument(
         "mode", nargs="?", choices=["web"], help="omit to fetch once; 'web' serves the dashboard"
     )
-    use.add_argument("--once", action="store_true", help="fetch once and print")
+    use.add_argument(
+        "--once", action="store_true", help="fetch once and print (the default without 'web')"
+    )
     use.add_argument("--host", default=LOOPBACK)
     use.add_argument("--port", type=int, default=DEFAULT_PORT)
     _add_json(use)
