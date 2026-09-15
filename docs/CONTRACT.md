@@ -421,7 +421,6 @@ when the login itself dies, and only a fresh `/login` fixes it.
 CLAUDE_CODE_KEYCHAIN_SERVICE: Final = "Claude Code-credentials"
 SECURITY_BIN: Final = "/usr/bin/security"          # absolute: no PATH hijack
 SECURITY_TIMEOUT_S: Final = 10.0
-SECURITY_STDIN_LIMIT: Final = 4000                 # darwin fgets() buffer is 4096
 
 class KeychainPort(Protocol):
     def read(self) -> str | None: ...              # None when absent
@@ -435,11 +434,39 @@ def default_port() -> KeychainPort: ...            # MacKeychain on darwin, else
 
 - `MacKeychain.read` → `security find-generic-password -a <user> -w -s <service>`;
   exit code 44 means "absent" and returns `None`; strip exactly one trailing newline.
-- `MacKeychain.write` → `security -i` on **stdin** so the secret never appears in
-  `argv` (visible to `ps`). Darwin's `security -i` reads one line into a 4096-byte
-  buffer, so a blob whose quoted command line would exceed `SECURITY_STDIN_LIMIT`
-  falls back to `add-generic-password -U … -w <blob>` in argv. The fallback is a real
-  exposure and is commented as such at the call site.
+- `MacKeychain.write` → `security add-generic-password -U -a <user> -s <service> -w <blob>`,
+  with the blob in **argv**. One path, no fallback.
+
+### Why argv, measured 2026-09-15
+
+All three alternatives were tried on this machine and rejected:
+
+| Mechanism | Result |
+|---|---|
+| `security -i` (stdin command mode) | **Silently truncates at ~4005 bytes and stores the truncated value.** A 4576-byte command line wrote a 4005-byte credential and then misparsed the remainder as a second command. |
+| `security add-generic-password … -w` with no value | Prompts twice on the terminal (`password data for new item:` / `retype`) and truncates the answer at **128 bytes**. |
+| `Security.framework` via `ctypes` | Writes a 4883-byte item exactly, nothing in argv — but only for items **this process created**. Reading Claude Code's item with user interaction disallowed returns `errSecAuthFailed` (**-25293**): our process is not in that item's ACL. Using it would put a GUI authorization prompt in front of every `vibe switch`. |
+
+The live blob on this machine is **4877 bytes** and `mcpOAuth` only grows, so `security -i`
+would corrupt the credential on every write rather than protect it. A code path that can
+only ever corrupt is worse than no code path, so it is not written at all.
+
+That leaves argv, and its exposure is stated rather than hidden. Apple's own help text
+says `Use of the -p or -w options is insecure`, and it is: macOS exposes a process's full
+argv to **any** local user through `ps` — verified here by reading root-owned and
+`_windowserver`-owned processes' arguments as an unprivileged user. For the duration of
+one `exec`, the credential is readable cross-uid.
+
+Two things bound it, and neither is an excuse:
+
+- Multi-user macOS is out of scope for v1.
+- The store already keeps the same tokens as plaintext JSON at `0600`, by frozen product
+  decision, so a **same-uid** attacker gains nothing from argv they did not already have.
+
+What argv genuinely adds is **cross-uid** reach for one exec. That goes in the README and
+in `docs/RUNBOOK.md` as a known limitation, and the call site carries a comment saying so.
+`MacKeychain.read` is unaffected: `find-generic-password -w` puts the secret on our own
+stdout pipe, never in argv.
 - Windows: **no code path**. `default_port()` on `win32` raises `VibeError`.
 - `CLAUDE_CONFIG_DIR` is never read, never set, never honoured. With it set Claude Code
   scopes the item to a hashed service name and `NO_KEYCHAIN=1` does not reliably
