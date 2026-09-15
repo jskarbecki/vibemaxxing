@@ -91,6 +91,17 @@ def guard_live_paths(request: pytest.FixtureRequest) -> Iterator[None]:
         sqlite3.connect, subprocess.run, subprocess.Popen = real_connect, real_run, real_popen
 
 
+@pytest.fixture
+def tmp_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A throwaway HOME. store.store_root() resolves under it, so no test can
+    reach the live store even by accident."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("USERPROFILE", raising=False)
+    return home
+
+
 @pytest.fixture(autouse=True)
 def clean_secret_registry() -> Iterator[None]:
     # The registry is process-global; a sentinel registered by one test would

@@ -71,7 +71,8 @@ src/vibemaxxing/
   web.py           E2  web dashboard server
   index.html       E2  web dashboard page (package data)
 tests/
-  conftest.py      B   autouse real-path guard (AC19)
+  conftest.py      B   autouse real-path guard (AC19), tmp_home fixture
+  fakes.py         B   FakeHttpClient, FakeKeychain    [shared, frozen]
   fixture_usage.json B copied verbatim from claude-usage-dashboard
 scripts/
   verify_switch_live.py  G  live Keychain round trip — never run from pytest
@@ -882,5 +883,9 @@ variable bypasses account OAuth, so the child does not read the Keychain at all.
 10. No test reaches the network, writes the real Keychain, or touches the real
     `~/.claude` or `~/.vibemaxxing`. The autouse guard in `tests/conftest.py` enforces
     this and fails the offending test by name (AC19).
-11. Hand off a summary and a path. Never a file dump, never a red slice. Writers never
+11. Use the shared test doubles in `tests/fakes.py` — `FakeHttpClient` and
+    `FakeKeychain` — and the `tmp_home` fixture in `tests/conftest.py`. Do not write a
+    second fake for a port that already has one; three incompatible fakes is a merge
+    conflict the integrator cannot resolve against anything.
+12. Hand off a summary and a path. Never a file dump, never a red slice. Writers never
     merge.
