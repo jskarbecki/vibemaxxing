@@ -16,6 +16,15 @@ POLL_FLOOR_S: Final = 60.0
 MIN_GAP_S: Final = 10.0
 BACKOFF_S: Final = (60.0, 120.0, 240.0, 480.0)
 
+# The cadence a dashboard left open actually runs at, which is not the floor.
+# POLL_FLOOR_S is the hard minimum -- nothing may poll faster. But one request
+# per account per 60 s is 60/hour, and claude-swap measured the usage endpoint's
+# budget at ~28-30 requests per identity per rolling hour, so a dashboard pinned
+# to the floor draws 429s on purpose. 180 s is ~20/hour, inside the measured
+# budget with headroom for manual commands, and it is what both long-lived
+# surfaces use: the TUI as its timer, the web dashboard as its cache TTL.
+DASHBOARD_INTERVAL_S: Final = 180.0
+
 
 @dataclass(frozen=True)
 class Due:

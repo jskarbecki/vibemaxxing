@@ -886,8 +886,13 @@ with the sentinel as the access token puts it there by construction. The owner s
 **`accounts/*.json` is the single exemption**, and the test additionally asserts it is
 `0600`. Everything else is scanned — the stash, the claim, the active pointer, the raw
 bytes of `history.db`, both streams, and the forced tracebacks. The stash check stays
-meaningful because a stash only ever holds a server-issued successor, so the seeded
-sentinel appearing there would be a real bug.
+meaningful because AC12 seeds the sentinel as the **access** token, and a stash only ever
+holds an access token the server just issued.
+
+(Phase A claimed a stash holds *nothing* from the predecessor. That was wrong: RFC 6749
+makes `refresh_token` optional in a refresh response, so a server that does not rotate it
+leaves the predecessor's refresh token in the successor and therefore in the stash. That
+is correct behaviour, and it does not weaken AC12, whose sentinel is the access token.)
 
 ---
 

@@ -29,6 +29,7 @@ from textual.widgets import Static
 
 from vibemaxxing import envelope, history, store
 from vibemaxxing.envelope import AccountView
+from vibemaxxing.poll import DASHBOARD_INTERVAL_S
 from vibemaxxing.pool import dry_in
 from vibemaxxing.redact import scrub
 from vibemaxxing.usage import Row
@@ -36,7 +37,8 @@ from vibemaxxing.usage import Row
 if TYPE_CHECKING:  # cli imports tui; the annotation must not import it back.
     from vibemaxxing.cli import Context
 
-REFRESH_S: Final = 60.0
+# The floor is 60 s; the cadence is not. See poll.DASHBOARD_INTERVAL_S.
+REFRESH_S: Final = DASHBOARD_INTERVAL_S
 BAR_WIDTH: Final = 20
 LABEL_WIDTH: Final = 22
 

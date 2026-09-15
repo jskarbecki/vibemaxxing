@@ -187,6 +187,7 @@ The trigger window is not only the sub-millisecond gap between B's write_stash a
 | location | `src/vibemaxxing/keychain.py:34` |
 | round | 3 |
 | status | OPEN |
+| note | PARTLY ADDRESSED. `scripts/verify_switch_live.py` now exists and is the evidence path. It has not been run: that needs a second Claude subscription account, which is a human gate. |
 
 **MacKeychain.read/write — the only code that reads and writes the credential on the first-class platform — is executed by nothing: no test can call it (the autouse guard blocks any argv0 named `security`), and scripts/verify_switch_live.py, the live round trip contract §2 assigns to Phase G, does not exist, so the macOS CI job is green having never run a line of it.**
 
@@ -232,6 +233,7 @@ The trigger window is not only the sub-millisecond gap between B's write_stash a
 | location | `src/vibemaxxing/poll.py:27` |
 | round | 1 |
 | status | OPEN |
+| note | PARTLY ADDRESSED. The rate half is fixed: both long-lived surfaces now poll at `poll.DASHBOARD_INTERVAL_S` (180 s, ~20 requests/hour, inside the measured 28-30/hour budget) and the web dashboard has a cache so N open tabs are one upstream fetch, tested. The stagger and the 60/120/240/480 backoff still govern no live request. Wiring `Scheduler` into `refresh_cycle` would gate work behind a clock that AC14 holds fixed across its 200 cycles, hollowing out that measurement; doing it properly needs the refresh restructured into a per-account path, which is a change worth its own milestone rather than one bolted on at v0.1.0. |
 
 **poll.Scheduler is instantiated nowhere in src/, so neither long-lived surface enforces MIN_GAP_S spacing or the 60/120/240/480 backoff that contract section 14 and AC16 define, and the web dashboard has no poll floor at all.**
 
@@ -427,6 +429,7 @@ The trigger window is not only the sub-millisecond gap between B's write_stash a
 | location | `src/vibemaxxing/poll.py:27` |
 | round | 1 |
 | status | OPEN |
+| note | PARTLY ADDRESSED, same as the row above. |
 
 **`poll.Scheduler` is imported only by its own test, so contract section 14's stagger, global min-gap and error backoff do not govern any request the product actually makes.**
 
@@ -441,7 +444,8 @@ The trigger window is not only the sub-millisecond gap between B's write_stash a
 | severity | **low** |
 | location | `README.md:7` |
 | round | 1 |
-| status | OPEN |
+| status | **FIXED** |
+| note | FIXED. README gained a Known limitations section naming the argv window, the plaintext-at-rest store and both `vibe run` limits; docs/RUNBOOK.md step 9 repeats it. |
 
 **Contract s8 requires the cross-uid `security -w` argv exposure to be stated in the README and docs/RUNBOOK.md; the README is seven lines that mention none of it and docs/RUNBOOK.md does not exist, so a shipped, published tool puts a credential in argv with no user-visible notice.**
 
@@ -457,6 +461,7 @@ The trigger window is not only the sub-millisecond gap between B's write_stash a
 | location | `src/vibemaxxing/oauth.py:130` |
 | round | 1 |
 | status | OPEN |
+| note | ACCEPTED, NOT A DEFECT IN THE CODE. RFC 6749 makes `refresh_token` optional in a refresh response, so carrying the predecessor's forward is correct; the contract sentence claiming a stash only ever holds a server-issued successor is the half that was wrong, and AC12 seeds the sentinel as the *access* token, which the stash never inherits. Contract wording corrected rather than the behaviour. |
 
 **When the token endpoint omits refresh_token, _credential_from_token carries the predecessor's refresh token into the "successor", which store.write_stash then writes to stash/<alias>.json — contradicting the contract's stated invariant that the stash only ever holds a server-issued successor.**
 
@@ -501,7 +506,8 @@ The trigger window is not only the sub-millisecond gap between B's write_stash a
 | severity | **low** |
 | location | `src/vibemaxxing/cli.py:151` |
 | round | 4 |
-| status | OPEN |
+| status | **FIXED** |
+| note | FIXED. The URL prints before the browser call, and the browser is only launched on darwin or when DISPLAY/WAYLAND_DISPLAY is set. |
 
 **`vibe add <alias>` calls `webbrowser.open` synchronously and before it prints the URL; on Linux CPython registers text-mode console browsers whenever `TERM` is set and `GenericBrowser.open` waits for the child, so a headless Linux login hands the terminal to lynx/w3m/links and blocks there, where the same call on macOS fires osascript and returns immediately.**
 
@@ -531,7 +537,8 @@ The trigger window is not only the sub-millisecond gap between B's write_stash a
 | severity | **low** |
 | location | `tests/test_leak.py:176` |
 | round | 1 |
-| status | OPEN |
+| status | **FIXED** |
+| note | FIXED. The loopback tests use an opener with an empty ProxyHandler. |
 
 **The leak tests reach the loopback dashboard with urllib.request.urlopen, which on macOS resolves proxies from the system network configuration, so a Mac with a configured HTTP proxy routes these 127.0.0.1 requests through it.**
 
@@ -607,6 +614,7 @@ The trigger window is not only the sub-millisecond gap between B's write_stash a
 | location | `tests/test_tui.py:228` |
 | round | 3 |
 | status | OPEN |
+| note | OPEN, same as the row above. |
 
 **AC14 feeds a byte-identical envelope on all 200 cycles, so `_reshape` short-circuits every time and the widget teardown/rebuild path the test exists to guard is executed exactly once, at mount — and on that path the dashboard exceeds AC14's own 1 MB threshold by ~10x.**
 
@@ -621,7 +629,8 @@ The trigger window is not only the sub-millisecond gap between B's write_stash a
 | severity | **low** |
 | location | `README.md:7` |
 | round | 1 |
-| status | OPEN |
+| status | **FIXED** |
+| note | FIXED, same as the row above. |
 
 **Contract sections 8 and 15 state that the Keychain argv cross-uid exposure and `vibe run`'s two limits are documented in the README and `docs/RUNBOOK.md`; the README is a six-line stub and `docs/RUNBOOK.md` does not exist.**
 
@@ -666,7 +675,8 @@ The trigger window is not only the sub-millisecond gap between B's write_stash a
 | severity | **low** |
 | location | `src/vibemaxxing/cli.py:336` |
 | round | 3 |
-| status | OPEN |
+| status | **FIXED** |
+| note | FIXED. `--once` is now rejected with `web`, so it means something where it could change behaviour, and is documented as the default otherwise. |
 
 **`--once`, the flag contract s15 puts in the documented `vibe usage --once` invocation, is defined on the parser and read by nothing, so it silently does nothing in the one place it would change behaviour.**
 
@@ -681,7 +691,8 @@ The trigger window is not only the sub-millisecond gap between B's write_stash a
 | severity | **low** |
 | location | `src/vibemaxxing/credentials.py:104` |
 | round | 4 |
-| status | OPEN |
+| status | **FIXED** |
+| note | FIXED. The recovery is now `claude /login`, not the command that just failed. |
 
 **A Keychain blob with no `claudeAiOauth` member makes `vibe add` exit 5 with the recovery `vibe add` — the command that just failed — where the sibling branch three lines earlier reports the same real condition as NeedsLoginError with `claude /login`.**
 
@@ -727,6 +738,7 @@ The trigger window is not only the sub-millisecond gap between B's write_stash a
 | location | `src/vibemaxxing/keychain.py:57` |
 | round | 3 |
 | status | OPEN |
+| note | PARTLY ADDRESSED, same as the row above. |
 
 **Neither `MacKeychain.read` nor `MacKeychain.write` is ever executed by anything in the tree: AC19 forbids pytest from running `security`, and `scripts/verify_switch_live.py`, the live round trip contract s2 reserves for exactly this, does not exist.**
 

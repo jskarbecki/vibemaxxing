@@ -14,10 +14,6 @@ import json
 import sys
 import threading
 import urllib.request
-
-# macOS resolves proxies from the system network configuration, so a Mac with a
-# configured HTTP proxy would route these 127.0.0.1 requests through it.
-_LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -25,6 +21,10 @@ import pytest
 
 from tests.fakes import FakeHttpClient, FakeKeychain, fixture_usage, make_credential, seed_account
 from vibemaxxing import cli, credentials, store, web
+
+# macOS resolves proxies from the system network configuration, so a Mac with a
+# configured HTTP proxy would route these 127.0.0.1 requests through it.
+_LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 SENTINEL = "VMXSENTINEL0000000000"
 NOW_S = 1_757_930_000.0
