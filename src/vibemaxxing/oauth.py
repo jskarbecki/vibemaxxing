@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import secrets
 import time
 import urllib.parse
 from collections.abc import Mapping
@@ -22,7 +23,7 @@ from pathlib import Path
 from typing import Final
 
 from vibemaxxing import store
-from vibemaxxing.credentials import Credential
+from vibemaxxing.credentials import EMPTY_IDENTITY, Credential, Identity
 from vibemaxxing.errors import NeedsLoginError, NetworkError, PasteFormatError, StateMismatchError
 from vibemaxxing.httpclient import HttpClient, HTTPError
 from vibemaxxing.redact import Secret
@@ -51,6 +52,15 @@ class RefreshOutcome:
     credential: Credential | None
     error: str | None
     stashed: bool = False
+
+
+def new_verifier() -> str:
+    # RFC 7636 wants 43-128 unreserved characters; token_urlsafe(32) gives 43.
+    return secrets.token_urlsafe(32)
+
+
+def new_state() -> str:
+    return secrets.token_urlsafe(16)
 
 
 def build_authorize_url(verifier: str, state: str) -> str:
@@ -204,7 +214,32 @@ def refresh(
         store.release_refresh(root, alias)
 
 
-def exchange_code(client: HttpClient, *, code: str, verifier: str, state: str) -> Credential:
+def _identity_from_token(payload: Mapping[str, object]) -> Identity:
+    """The token endpoint optionally names who the token belongs to. Opportunistic:
+    anything malformed yields EMPTY_IDENTITY rather than breaking the login."""
+    account = payload.get("account")
+    if not isinstance(account, dict):
+        return EMPTY_IDENTITY
+    organization = payload.get("organization")
+    org = organization if isinstance(organization, dict) else {}
+    return Identity(
+        email=_str_or_none(account.get("email_address")),
+        account_uuid=_str_or_none(account.get("uuid")),
+        organization_name=_str_or_none(org.get("name")),
+        organization_uuid=_str_or_none(org.get("uuid")),
+        seat_tier=None,
+        billing_type=None,
+        display_name=_str_or_none(account.get("display_name")),
+    )
+
+
+def _str_or_none(value: object) -> str | None:
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def exchange_code(
+    client: HttpClient, *, code: str, verifier: str, state: str
+) -> tuple[Credential, Identity]:
     try:
         payload = _post_token(
             client,
@@ -222,4 +257,5 @@ def exchange_code(client: HttpClient, *, code: str, verifier: str, state: str) -
             f"the login could not be completed (HTTP {exc.status})",
             _RECOVERY,
         ) from None
-    return _credential_from_token(payload, now_ms=int(time.time() * 1000), previous=None)
+    credential = _credential_from_token(payload, now_ms=int(time.time() * 1000), previous=None)
+    return credential, _identity_from_token(payload)
