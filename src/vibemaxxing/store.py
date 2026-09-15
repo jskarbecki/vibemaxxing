@@ -24,6 +24,7 @@ from vibemaxxing.credentials import (
     parse_blob,
     parse_blob_members,
     parse_credential,
+    read_claude_identity,
 )
 from vibemaxxing.errors import NotFoundError, StoreError, UsageError
 from vibemaxxing.fsutil import private_dir, write_private
@@ -33,7 +34,13 @@ from vibemaxxing.models import AccountState
 SCHEMA_VERSION: Final = 1
 CLAIM_LEASE_S: Final = 30.0
 
-_ALIAS_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+# Lower case only. An alias is a filename, and macOS's APFS is case-insensitive:
+# with a case-sensitive comparison in code, `vibe add Jan` reports itself free
+# against an existing `jan`, then os.replace overwrites accounts/jan.json and the
+# first account's refresh token is gone with nothing said. Rejecting the mixed
+# case outright is the only version of this that is unambiguous on every
+# filesystem, and it is louder than silently folding the name the user typed.
+_ALIAS_RE: Final = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 
 @dataclass(frozen=True)
@@ -54,9 +61,11 @@ def _checked(alias: str) -> str:
     # The single boundary between a user-supplied alias and a path. Guarding here
     # rather than in each caller is what makes traversal impossible by construction.
     if not valid_alias(alias):
+        folded = re.sub(r"[^a-z0-9._-]", "-", alias.lower()).strip("-.") or "account"
         raise UsageError(
-            f"{alias!r} is not a usable alias: letters, digits, dot, dash and "
-            "underscore only, up to 64 characters, starting with a letter or digit",
+            f"{alias!r} is not a usable alias: lower-case letters, digits, dot, dash "
+            "and underscore only, up to 64 characters, starting with a letter or digit. "
+            f"Try {folded!r}.",
             "vibe list",
         )
     return alias
@@ -203,7 +212,17 @@ def write_account(root: Path, account: Account) -> None:
 
 
 def delete_account(root: Path, alias: str) -> None:
-    account_path(root, alias).unlink(missing_ok=True)
+    path = account_path(root, alias)
+    if not path.exists():
+        raise NotFoundError(
+            f'there is no account named "{alias}"',
+            "vibe list",
+        )
+    path.unlink(missing_ok=True)
+    # A .tmp sibling is what write_private leaves when a process dies between
+    # os.open and os.replace. It holds a whole credential and nothing else will
+    # ever read or remove it, so `vibe remove` must not report success over one.
+    path.with_name(path.name + ".tmp").unlink(missing_ok=True)
     # Everything keyed by the alias goes with it. A stash left behind would be
     # consumed as a successor if the alias were re-added, handing the new login a
     # refresh token the server killed weeks ago.
@@ -318,7 +337,18 @@ def switch(root: Path, alias: str, port: KeychainPort) -> None:
     if base_raw is not None and outgoing is not None and account_path(root, outgoing).exists():
         # Claude Code rotates the live token behind our back; without this resync
         # the outgoing account is stranded on a token the server already killed.
-        write_account(root, replace(read_account(root, outgoing), credential=parse_blob(base_raw)))
+        #
+        # But the blob in the port is only the outgoing account's if nobody ran
+        # `claude /login` behind us. When they have, the port holds a DIFFERENT
+        # account and copying it here writes one account's tokens into another
+        # account's file, destroying the displaced refresh token. Identity is
+        # free to check, so check it: resync only when the live account uuid is
+        # unknown or agrees.
+        account = read_account(root, outgoing)
+        live_uuid = read_claude_identity(Path.home() / ".claude.json").account_uuid
+        stored_uuid = account.identity.account_uuid
+        if live_uuid is None or stored_uuid is None or live_uuid == stored_uuid:
+            write_account(root, replace(account, credential=parse_blob(base_raw)))
 
     # Re-read: switching to the account that was already active must keep the
     # credential the resync just wrote, not the copy read before it.

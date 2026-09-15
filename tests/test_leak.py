@@ -22,6 +22,10 @@ import pytest
 from tests.fakes import FakeHttpClient, FakeKeychain, fixture_usage, make_credential, seed_account
 from vibemaxxing import cli, credentials, store, web
 
+# macOS resolves proxies from the system network configuration, so a Mac with a
+# configured HTTP proxy would route these 127.0.0.1 requests through it.
+_LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
 SENTINEL = "VMXSENTINEL0000000000"
 NOW_S = 1_757_930_000.0
 
@@ -173,9 +177,9 @@ def test_web_dashboard_serves_no_token(
     try:
         host, port = server.socket.getsockname()[:2]
         assert host == "127.0.0.1"
-        with urllib.request.urlopen(f"http://{host}:{port}/api/usage", timeout=5) as response:
+        with _LOOPBACK_OPENER.open(f"http://{host}:{port}/api/usage", timeout=5) as response:
             body = response.read().decode()
-        with urllib.request.urlopen(f"http://{host}:{port}/", timeout=5) as response:
+        with _LOOPBACK_OPENER.open(f"http://{host}:{port}/", timeout=5) as response:
             page = response.read().decode()
     finally:
         server.shutdown()
@@ -207,7 +211,7 @@ def test_a_failing_envelope_serves_no_token(tmp_home: Path) -> None:
     try:
         host, port = server.socket.getsockname()[:2]
         try:
-            urllib.request.urlopen(f"http://{host}:{port}/api/usage", timeout=5)
+            _LOOPBACK_OPENER.open(f"http://{host}:{port}/api/usage", timeout=5)
             raise AssertionError("expected a 500")
         except urllib.error.HTTPError as exc:
             body = exc.read().decode()

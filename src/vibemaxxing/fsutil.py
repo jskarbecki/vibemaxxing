@@ -22,8 +22,12 @@ def private_dir(path: Path) -> Path:
 
 
 def write_private(path: Path, text: str) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, FILE_MODE)
+    # The temp name carries the pid: two processes writing the same credential
+    # file must not share one inode, or the loser's stale fd writes straight
+    # into the file the winner already committed and tears it. O_EXCL makes the
+    # collision an error rather than a silent share.
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, FILE_MODE)
     try:
         os.fchmod(fd, FILE_MODE)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:

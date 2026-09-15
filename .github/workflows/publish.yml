@@ -25,3 +25,25 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+
+  pypi:
+    name: PyPI
+    runs-on: ubuntu-latest
+    # Real PyPI only for a full release, never a prerelease. Nothing reached it
+    # before v0.1.0 by design: the pipeline was proven on TestPyPI first.
+    if: github.event.release.prerelease == false
+    environment: pypi
+    permissions:
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.11'
+
+      - run: uv build
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

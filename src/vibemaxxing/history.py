@@ -37,11 +37,15 @@ def connect(path: Path, *, check_same_thread: bool = True) -> sqlite3.Connection
     # The web dashboard serves each request on its own thread, so it opens the
     # one process-wide connection with the check off and serialises with a lock.
     conn = sqlite3.connect(path, check_same_thread=check_same_thread)
-    with closing(conn.cursor()) as cur:
-        cur.execute(_SCHEMA)
-        # PRAGMA takes no parameter; the value is a module constant, not input.
-        cur.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-    conn.commit()
+    try:
+        with closing(conn.cursor()) as cur:
+            cur.execute(_SCHEMA)
+            # PRAGMA takes no parameter; the value is a module constant, not input.
+            cur.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        conn.commit()
+    except BaseException:
+        conn.close()
+        raise
     return conn
 
 
