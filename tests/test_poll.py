@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 from vibemaxxing.poll import MIN_GAP_S, POLL_FLOOR_S, Due, Scheduler
 
 
@@ -33,7 +35,7 @@ def test_poll_scheduler_respects_floor_stagger_and_backoff() -> None:
     assert max(windows) == 5
 
     def gaps(dues: list[Due]) -> list[float]:
-        return [b.at_s - a.at_s for a, b in zip(dues, dues[1:], strict=False)]
+        return [b.at_s - a.at_s for a, b in pairwise(dues)]
 
     assert min(gaps(scheduled)) >= MIN_GAP_S
     assert min(gaps(issued)) >= MIN_GAP_S
