@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import gc
 import sys
 import tracemalloc
@@ -150,6 +151,10 @@ async def test_refresh_paints_each_account_and_never_a_token(tmp_home: Path) -> 
 
     app = tui.Dashboard(ctx)
     async with app.run_test() as pilot:
+        # The first refresh is deliberately off the message pump, so being
+        # mounted and having painted are two different moments. Bounded, so a
+        # regression fails the run instead of hanging CI until it times out.
+        await asyncio.wait_for(app.first_paint.wait(), timeout=10)
         await pilot.pause()
         assert set(app.panels) == {"one", "two"}
         painted = _text(app.panels["one"])
@@ -180,6 +185,10 @@ async def test_a_failed_poll_reports_itself_and_keeps_the_window(tmp_home: Path)
 
     app = tui.Dashboard(ctx)
     async with app.run_test() as pilot:
+        # The first refresh is deliberately off the message pump, so being
+        # mounted and having painted are two different moments. Bounded, so a
+        # regression fails the run instead of hanging CI until it times out.
+        await asyncio.wait_for(app.first_paint.wait(), timeout=10)
         await pilot.pause()
         panel = _text(app.panels["one"])
 
