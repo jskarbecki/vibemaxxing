@@ -1,0 +1,17 @@
+# Default rules plus one narrow exception. Never a path-scoped exclusion of
+# tests/: that is exactly where the sentinel tokens live and where a real leak
+# would show. The exception is the literal string and nothing else.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = """
+`default_claude_max_20x` is the rateLimitTier string a live /api/oauth/usage
+credential carries. It is a plan-tier name, not a credential, and the test that
+asserts it is the one proving parse_blob reads the field at all. gitleaks'
+generic-api-key rule fires on its entropy (3.57). Allowlisted by the exact
+matched text, with no path clause -- a path clause suppressed unrelated
+high-entropy strings in the same file, which was verified and rejected.
+"""
+regexTarget = "match"
+regexes = ['''rate_limit_tier == "default_claude_max_20x"''']

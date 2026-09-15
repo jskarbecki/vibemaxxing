@@ -47,6 +47,6 @@ jobs:
         run: |
           curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
             | tar -xz gitleaks
-          ./gitleaks git . --redact --no-banner --exit-code 1
+          ./gitleaks git . --config .gitleaks.toml --redact --no-banner --exit-code 1
         env:
           GITLEAKS_VERSION: 8.30.1
