@@ -26,6 +26,7 @@ from vibemaxxing.credentials import (
     parse_credential,
 )
 from vibemaxxing.errors import NotFoundError, StoreError, UsageError
+from vibemaxxing.fsutil import private_dir, write_private
 from vibemaxxing.keychain import KeychainPort
 from vibemaxxing.models import AccountState
 
@@ -81,38 +82,15 @@ def _claim_path(root: Path, alias: str) -> Path:
     return root / "locks" / f"{_checked(alias)}.claim"
 
 
-def _ensure_dir(path: Path) -> Path:
-    # mkdir(parents=True) ignores `mode` for the intermediates it creates, so the
-    # root would land at the umask default. chmod each level we own.
-    path.mkdir(parents=True, exist_ok=True)
-    path.chmod(0o700)
-    return path
-
-
 def _ensure_parent(path: Path, root: Path) -> None:
-    _ensure_dir(root)
+    private_dir(root)
     if path.parent != root:
-        _ensure_dir(path.parent)
-
-
-def _write_private(path: Path, text: str) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-    os.replace(tmp, path)
+        private_dir(path.parent)
 
 
 def _write_json(path: Path, root: Path, payload: Mapping[str, object]) -> None:
     _ensure_parent(path, root)
-    _write_private(path, json.dumps(payload, indent=2) + "\n")
+    write_private(path, json.dumps(payload, indent=2) + "\n")
 
 
 def _read_json(path: Path, alias: str) -> dict[str, object]:
@@ -287,8 +265,8 @@ def read_active(root: Path) -> str | None:
 
 
 def write_active(root: Path, alias: str) -> None:
-    _ensure_dir(root)
-    _write_private(root / "active", _checked(alias) + "\n")
+    private_dir(root)
+    write_private(root / "active", _checked(alias) + "\n")
 
 
 def claim_refresh(root: Path, alias: str, *, now_s: float) -> bool:
@@ -303,7 +281,7 @@ def claim_refresh(root: Path, alias: str, *, now_s: float) -> bool:
         # ponytail: two processes can both take over the same lapsed claim; the
         # loser then posts a spent refresh token and gets one invalid_grant. Swap
         # the O_EXCL create for an flock if that ever shows up in practice.
-        _write_private(path, payload)
+        write_private(path, payload)
         return True
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(payload)

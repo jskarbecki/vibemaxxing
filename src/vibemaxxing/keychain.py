@@ -9,13 +9,13 @@ isolate config directories, so only the fixed-name item matters.
 from __future__ import annotations
 
 import getpass
-import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Final, Protocol
 
 from vibemaxxing.errors import VibeError
+from vibemaxxing.fsutil import private_dir, write_private
 
 CLAUDE_CODE_KEYCHAIN_SERVICE: Final = "Claude Code-credentials"
 SECURITY_BIN: Final = "/usr/bin/security"
@@ -29,21 +29,6 @@ class KeychainPort(Protocol):
     def read(self) -> str | None: ...
 
     def write(self, blob: str) -> None: ...
-
-
-def _write_private(path: Path, text: str) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-    os.replace(tmp, path)
 
 
 class MacKeychain:
@@ -130,10 +115,9 @@ class FileKeychain:
 
     def write(self, blob: str) -> None:
         path = self._path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.parent.chmod(0o700)
+        private_dir(path.parent)
         try:
-            _write_private(path, blob)
+            write_private(path, blob)
         except OSError as exc:
             raise VibeError(
                 f"could not write {path}: {exc.__class__.__name__}",

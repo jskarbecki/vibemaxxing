@@ -7,12 +7,12 @@ what makes a raw byte scan of the database a meaningful check.
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 from typing import Final
 
+from vibemaxxing.fsutil import create_private_file, private_dir
 from vibemaxxing.models import Sample
 
 SCHEMA_VERSION: Final = 1
@@ -29,9 +29,11 @@ CREATE TABLE IF NOT EXISTS samples (
 
 
 def connect(path: Path) -> sqlite3.Connection:
-    if not path.exists():
-        # sqlite would create it 0644; every file in the store is 0600.
-        os.close(os.open(path, os.O_CREAT | os.O_WRONLY, 0o600))
+    # The store tree only exists once an account has been written; a dashboard
+    # opened before that would otherwise die on a missing directory.
+    private_dir(path.parent)
+    # sqlite would create the file 0644; every file in the store is 0600.
+    create_private_file(path)
     conn = sqlite3.connect(path)
     with closing(conn.cursor()) as cur:
         cur.execute(_SCHEMA)

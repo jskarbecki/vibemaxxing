@@ -64,3 +64,13 @@ def test_history_connect_creates_private_file(tmp_path: Path) -> None:
     with closing(history.connect(path)) as conn, closing(conn.cursor()) as cur:
         assert path.stat().st_mode & 0o777 == 0o600
         assert cur.execute("PRAGMA user_version").fetchone()[0] == history.SCHEMA_VERSION
+
+
+def test_connect_creates_the_store_tree_when_it_is_missing(tmp_home: Path) -> None:
+    # A dashboard opened before any account exists still has to record samples.
+    path = tmp_home / ".vibemaxxing" / "history.db"
+    assert not path.parent.exists()
+    with closing(history.connect(path)) as conn:
+        history.record(conn, at_s=1.0, pool=2.0)
+    assert path.parent.stat().st_mode & 0o777 == 0o700
+    assert path.stat().st_mode & 0o777 == 0o600

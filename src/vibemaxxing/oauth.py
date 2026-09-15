@@ -186,19 +186,22 @@ def refresh(
             return RefreshOutcome(None, "transient")
         store.write_stash(root, alias, successor)
 
+    # finally, not a release per branch: read_account raises StoreError or
+    # NotFoundError on a corrupt account file, and letting that escape without
+    # releasing would wedge the alias at "busy" for the whole claim lease.
     try:
-        account = store.read_account(root, alias)
-        store.write_account(root, replace(account, credential=successor))
-    except OSError:
-        # The successor is durable but the account file does not hold it yet, so
-        # the caller may use the credential and must not claim the account was
-        # updated. The stash stays until step 6 can run.
+        try:
+            account = store.read_account(root, alias)
+            store.write_account(root, replace(account, credential=successor))
+        except OSError:
+            # The successor is durable but the account file does not hold it
+            # yet, so the caller may use the credential and must not claim the
+            # account was updated. The stash stays until the next run.
+            return RefreshOutcome(successor, "transient", stashed=True)
+        store.delete_stash(root, alias)
+        return RefreshOutcome(successor, None)
+    finally:
         store.release_refresh(root, alias)
-        return RefreshOutcome(successor, "transient", stashed=True)
-
-    store.delete_stash(root, alias)
-    store.release_refresh(root, alias)
-    return RefreshOutcome(successor, None)
 
 
 def exchange_code(client: HttpClient, *, code: str, verifier: str, state: str) -> Credential:
