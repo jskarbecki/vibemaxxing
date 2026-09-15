@@ -13,7 +13,6 @@ NOW = 1_757_930_000.0
 
 
 def test_history_prunes_beyond_retention(tmp_path: Path) -> None:
-    conn = history.connect(tmp_path / "history.db")
     inside = [
         (NOW, 5.0),
         (NOW - DAY_S, 4.0),
@@ -21,47 +20,47 @@ def test_history_prunes_beyond_retention(tmp_path: Path) -> None:
         (NOW - 90 * DAY_S, 2.0),
     ]
     outside = [(NOW - 91 * DAY_S, 1.0), (NOW - 120 * DAY_S, 0.5)]
-    # Written newest first so no write prunes a row the assertions still need.
-    for at_s, pool in [*inside, *outside]:
-        history.record(conn, at_s=at_s, pool=pool)
 
-    assert history.prune(conn, now_s=NOW) == len(outside)
-    assert history.samples(conn, since_s=0.0) == [
-        Sample(at_s, pool) for at_s, pool in sorted(inside)
-    ]
-    conn.close()
+    with closing(history.connect(tmp_path / "history.db")) as conn:
+        # Written newest first so no write prunes a row the assertions still need.
+        for at_s, pool in [*inside, *outside]:
+            history.record(conn, at_s=at_s, pool=pool)
+
+        assert history.prune(conn, now_s=NOW) == len(outside)
+        assert history.samples(conn, since_s=0.0) == [
+            Sample(at_s, pool) for at_s, pool in sorted(inside)
+        ]
 
 
 def test_history_record_prunes_on_write(tmp_path: Path) -> None:
-    conn = history.connect(tmp_path / "history.db")
-    history.record(conn, at_s=NOW - 91 * DAY_S, pool=1.0)
-    history.record(conn, at_s=NOW, pool=2.0)
-    assert history.samples(conn, since_s=0.0) == [Sample(NOW, 2.0)]
+    with closing(history.connect(tmp_path / "history.db")) as conn:
+        history.record(conn, at_s=NOW - 91 * DAY_S, pool=1.0)
+        history.record(conn, at_s=NOW, pool=2.0)
+        assert history.samples(conn, since_s=0.0) == [Sample(NOW, 2.0)]
 
-    history.record(conn, at_s=NOW, pool=3.0)
-    assert history.samples(conn, since_s=0.0) == [Sample(NOW, 3.0)]
-    conn.close()
+        history.record(conn, at_s=NOW, pool=3.0)
+        assert history.samples(conn, since_s=0.0) == [Sample(NOW, 3.0)]
 
 
 def test_history_samples_are_bounded_and_ordered(tmp_path: Path) -> None:
-    conn = history.connect(tmp_path / "history.db")
-    for i in range(10):
-        history.record(conn, at_s=NOW + i, pool=float(i))
+    with closing(history.connect(tmp_path / "history.db")) as conn:
+        for i in range(10):
+            history.record(conn, at_s=NOW + i, pool=float(i))
 
-    assert history.samples(conn, since_s=NOW + 8) == [Sample(NOW + 8, 8.0), Sample(NOW + 9, 9.0)]
-    assert history.samples(conn, since_s=0.0, limit=3) == [
-        Sample(NOW + 7, 7.0),
-        Sample(NOW + 8, 8.0),
-        Sample(NOW + 9, 9.0),
-    ]
-    conn.close()
+        assert history.samples(conn, since_s=NOW + 8) == [
+            Sample(NOW + 8, 8.0),
+            Sample(NOW + 9, 9.0),
+        ]
+        assert history.samples(conn, since_s=0.0, limit=3) == [
+            Sample(NOW + 7, 7.0),
+            Sample(NOW + 8, 8.0),
+            Sample(NOW + 9, 9.0),
+        ]
 
 
 def test_history_connect_creates_private_file(tmp_path: Path) -> None:
     path = tmp_path / "history.db"
-    conn = history.connect(path)
 
-    assert path.stat().st_mode & 0o777 == 0o600
-    with closing(conn.cursor()) as cur:
+    with closing(history.connect(path)) as conn, closing(conn.cursor()) as cur:
+        assert path.stat().st_mode & 0o777 == 0o600
         assert cur.execute("PRAGMA user_version").fetchone()[0] == history.SCHEMA_VERSION
-    conn.close()
