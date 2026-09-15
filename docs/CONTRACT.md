@@ -57,6 +57,7 @@ src/vibemaxxing/
   errors.py        B   error taxonomy, exit codes [shared, frozen]
   redact.py        B   Secret, scrub, excepthook  [shared, frozen]
   httpclient.py    B   HttpClient port, HTTPError [shared, frozen]
+  fsutil.py        C   private_dir, write_private, create_private_file [shared]
   store.py         C1  on-disk store, stash, active pointer, claim
   credentials.py   C1  Credential, Identity, blob (de)serialisation
   keychain.py      C1  KeychainPort, MacKeychain, FileKeychain
@@ -87,7 +88,7 @@ writer that needs a change there asks the integrator.
 Import direction is one-way, no cycles:
 
 ```
-models, errors, redact, httpclient   (leaves — import nothing from the package)
+models, errors, redact, httpclient, fsutil   (leaves — import nothing from the package)
       ^          ^          ^
 credentials -> keychain -> store -> oauth
       ^                              ^
@@ -254,6 +255,11 @@ Root is `Path.home() / ".vibemaxxing"`. No environment override: tests set `HOME
 
 **AC11**: every file `0o600`, every directory `0o700`, created that way, never widened.
 Writes are atomic: write `<name>.tmp` with `os.open(..., 0o600)`, `fsync`, `os.replace`.
+
+That is implemented **once**, in `fsutil.py` — `private_dir`, `write_private`,
+`create_private_file` — and `store`, `keychain` and `history` all call it. Two copies of
+a `0600` write in a credential tool is one copy that can drift, and `keychain` cannot
+import it from `store` because `store` imports `keychain`.
 
 ### `accounts/<alias>.json`
 
@@ -568,7 +574,11 @@ spent**, and only one refresh per alias is in flight at a time.
 Exact order:
 
 1. `read_stash(root, alias)` — a present stash means the last run was interrupted.
-   Use it instead of POSTing a token that is already spent, and jump to step 6.
+   Use it instead of POSTing a token that is already spent, and jump to **step 5**.
+   (Phase A wrote "step 6" here. Taken literally that deletes the durable successor
+   without ever writing it to the account file, so the next run POSTs the spent
+   predecessor and earns `invalid_grant` — the exact failure the stash exists to
+   prevent. Corrected 2026-09-15; the implementation was always 5 → 6 → 7.)
 2. `claim_refresh(root, alias)` — `False` → return `RefreshOutcome(None, "busy")`.
 3. **Unlock, then POST.** `{"grant_type": "refresh_token", "refresh_token": …,
    "client_id": …}`, JSON body, no auth header.
@@ -722,7 +732,9 @@ class Summary:
 def summarize(payload: Mapping[str, object]) -> Summary: ...
 ```
 
-`fetch_usage` sends `Authorization: Bearer <token>` and `anthropic-beta: oauth-2025-04-20`.
+`fetch_usage` sends `Authorization: Bearer <token>` and `anthropic-beta: oauth-2025-04-20`,
+and nothing else. Measured 2026-09-15: those two headers alone return
+`HTTP/1.1 200 OK` with `Content-Type: application/json`, so no `Accept` header is added.
 
 `summarize` renders from the **`limits` array**, never from the sibling `five_hour` /
 `seven_day` objects. `kind` values are open-ended. Labels:
