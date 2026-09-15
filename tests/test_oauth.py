@@ -237,11 +237,20 @@ def test_exchange_code_posts_the_contract_body() -> None:
             "refresh_token": "fresh-refresh-token",
             "expires_in": 3600,
             "scope": "user:profile",
+            "account": {"uuid": "acct-uuid", "email_address": "who@example.com"},
+            "organization": {"uuid": "org-uuid", "name": "Example Org"},
         },
     )
-    credential = exchange_code(client, code="the-code", verifier="the-verifier", state="the-state")
+    credential, identity = exchange_code(
+        client, code="the-code", verifier="the-verifier", state="the-state"
+    )
     assert credential.access_token.reveal() == "fresh-access-token"
     assert credential.scopes == ("user:profile",)
+    # The token response optionally names the account, so a fresh login is not
+    # nameless until Claude Code next rewrites ~/.claude.json.
+    assert identity.email == "who@example.com"
+    assert identity.account_uuid == "acct-uuid"
+    assert identity.organization_name == "Example Org"
 
     request = client.requests[0]
     assert request.method == "POST"

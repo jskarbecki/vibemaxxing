@@ -533,6 +533,10 @@ There is **no localhost callback**. The flow is paste-the-code.
 def parse_pasted_code(paste: str, expected_state: str) -> tuple[str, str]: ...
 ```
 
+Phase A named PKCE for this module but specified no generator, so Phase D added
+`new_verifier()` (`secrets.token_urlsafe(32)`, 43 chars, inside RFC 7636's 43-128) and
+`new_state()` (`secrets.token_urlsafe(16)`).
+
 Split on the **first** `#`. No `#` → `PasteFormatError`. State half ≠ `expected_state` →
 `StateMismatchError`. Returns `(code, state)`.
 
@@ -598,8 +602,15 @@ the POST. A crashed claimer ages out.
 ### Exchange
 
 ```python
-def exchange_code(client: HttpClient, *, code: str, verifier: str, state: str) -> Credential: ...
+def exchange_code(client: HttpClient, *, code: str, verifier: str,
+                  state: str) -> tuple[Credential, Identity]: ...
 ```
+
+It returns an `Identity` as well as a `Credential`. The token response optionally carries
+`account` / `organization` objects naming who the token belongs to, and without them a
+freshly logged-in account would render as its bare alias until Claude Code next rewrote
+`~/.claude.json` — which, for an account that is not active, may be never. The parse is
+opportunistic: anything malformed yields `EMPTY_IDENTITY` rather than failing the login.
 
 `{"grant_type": "authorization_code", "code": …, "code_verifier": …, "state": …,
 "client_id": …, "redirect_uri": …}`. **Unverified until a live 200 is pasted.** Nothing
@@ -659,6 +670,24 @@ literal string `vibe add`.
 
 No token value appears in this document, in any form, ever. The `--json` dumper runs
 `scrub()` over the serialised text before it is written.
+
+`list` and `usage --once` emit the account envelope above. `add`, `switch`, `remove`,
+`alias` and `run` change state rather than report it, so in `--json` mode they emit the
+action envelope instead — reporting a fetched account list after a `switch` would mean a
+network round trip the command did not need:
+
+```json
+{"schema": 1, "ok": true, "action": "switch", "alias": "work"}
+```
+
+`action` is the subcommand name; the remaining keys name what it acted on (`alias`, or
+`old`/`new` for `alias`, plus `exit_code` for `run` and `adopted` for `add`).
+
+`envelope.py` also owns `collect()`, which does the reads, the refreshes and the usage
+fetches and returns `AccountView`s, and `pool_weeks()`, which is the single place the
+pooled number is computed. The CLI, the TUI and the web dashboard all call those two and
+`build()`, which is what makes the three surfaces agree by construction rather than by
+discipline.
 
 Error envelope, for a command that fails in `--json` mode:
 

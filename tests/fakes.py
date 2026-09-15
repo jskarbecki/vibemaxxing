@@ -5,8 +5,14 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 
+from vibemaxxing import store
+from vibemaxxing.credentials import EMPTY_IDENTITY, Credential, Identity
 from vibemaxxing.httpclient import HttpResponse
+from vibemaxxing.models import AccountState
+from vibemaxxing.redact import Secret
+from vibemaxxing.store import Account
 
 
 @dataclass
@@ -69,3 +75,52 @@ class FakeKeychain:
     def write(self, blob: str) -> None:
         self.log.append("keychain.write")
         self.blob = blob
+
+
+def make_credential(
+    *,
+    access: str = "access-token-value",
+    refresh: str = "refresh-token-value",
+    expires_at_ms: int = 4_102_444_800_000,
+    refresh_expires_at_ms: int | None = 4_102_444_800_000,
+    subscription_type: str | None = "max",
+) -> Credential:
+    return Credential(
+        access_token=Secret(access),
+        refresh_token=Secret(refresh),
+        expires_at_ms=expires_at_ms,
+        refresh_token_expires_at_ms=refresh_expires_at_ms,
+        scopes=("user:profile", "user:inference"),
+        subscription_type=subscription_type,
+        rate_limit_tier="default",
+    )
+
+
+def seed_account(
+    root: Path,
+    alias: str,
+    *,
+    credential: Credential | None = None,
+    identity: Identity | None = None,
+    active: bool = False,
+    added_at: float = 1_757_930_000.0,
+) -> Account:
+    account = Account(
+        alias=alias,
+        credential=credential if credential is not None else make_credential(),
+        identity=identity if identity is not None else EMPTY_IDENTITY,
+        state=AccountState.OK,
+        message=None,
+        added_at=added_at,
+    )
+    store.write_account(root, account)
+    if active:
+        store.write_active(root, alias)
+    return account
+
+
+def fixture_usage() -> dict[str, object]:
+    path = Path(__file__).with_name("fixture_usage.json")
+    payload = json.loads(path.read_text())
+    assert isinstance(payload, dict)
+    return payload
