@@ -53,7 +53,7 @@ License MIT, author `Jan Skarbecki <jan@intra-ai.de>`.
 src/vibemaxxing/
   __init__.py      B   __version__ from importlib.metadata
   __main__.py      B   python -m vibemaxxing
-  states.py        B   AccountState              [shared, frozen]
+  models.py        B   AccountState, Sample      [shared, frozen]
   errors.py        B   error taxonomy, exit codes [shared, frozen]
   redact.py        B   Secret, scrub, excepthook  [shared, frozen]
   httpclient.py    B   HttpClient port, HTTPError [shared, frozen]
@@ -86,7 +86,7 @@ writer that needs a change there asks the integrator.
 Import direction is one-way, no cycles:
 
 ```
-states, errors, redact, httpclient   (leaves — import nothing from the package)
+models, errors, redact, httpclient   (leaves — import nothing from the package)
       ^          ^          ^
 credentials -> keychain -> store -> oauth
       ^                              ^
@@ -99,7 +99,7 @@ credentials -> keychain -> store -> oauth
 
 ---
 
-## 3. Account state enum — `states.py`
+## 3. Shared value types — `models.py`
 
 ```python
 class AccountState(StrEnum):
@@ -221,9 +221,20 @@ passes it down. No test may reach the network.
 Allowed hosts, and no others: `claude.ai`, `platform.claude.com`, `api.anthropic.com`.
 No version pings, no analytics, no telemetry.
 
-### `states.py`
+### `models.py`
 
-See §3.
+`AccountState` (§3) and `Sample`:
+
+```python
+@dataclass(frozen=True)
+class Sample:
+    at_s: float
+    pool: float
+```
+
+`Sample` lives here, not in `history.py` or `pool.py`, because `history` produces it and
+`pool.dry_in` consumes it — the two are separate Phase-C slices and neither may depend
+on the other.
 
 ---
 
@@ -724,12 +735,7 @@ account with no `weekly_all` row contributes `0`. Five `ok` accounts at
 `[0, 56, 66, 100, 20]` give `2.58` (AC8).
 
 ```python
-@dataclass(frozen=True)
-class Sample:
-    at_s: float
-    pool: float
-
-def dry_in(samples: Sequence[Sample]) -> timedelta | None: ...
+def dry_in(samples: Sequence[Sample]) -> timedelta | None: ...   # Sample from models
 ```
 
 Measured from the **newest** sample's timestamp, using the oldest and newest samples:
