@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import sys
 import tracemalloc
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -14,6 +15,7 @@ from tests.fakes import FakeHttpClient, FakeKeychain, fixture_usage, make_creden
 from vibemaxxing import cli, tui
 from vibemaxxing.credentials import EMPTY_IDENTITY, Identity
 from vibemaxxing.envelope import AccountView
+from vibemaxxing.httpclient import HTTPError
 from vibemaxxing.models import AccountState
 from vibemaxxing.usage import Row, Summary
 
@@ -73,9 +75,10 @@ def _context(root: Path, client: FakeHttpClient) -> cli.Context:
     return cli.Context(root=root, client=client, port=FakeKeychain(), now_s=NOW_S)
 
 
-def _queue(client: FakeHttpClient, count: int) -> None:
+def _queue(client: FakeHttpClient, count: int, payload: dict[str, object] | None = None) -> None:
+    usage = fixture_usage() if payload is None else payload
     for _ in range(count):
-        client.queue_json(200, fixture_usage())
+        client.queue_json(200, usage)
 
 
 def test_account_content_renders_every_row_from_the_payload() -> None:
@@ -165,24 +168,56 @@ async def test_refresh_paints_each_account_and_never_a_token(tmp_home: Path) -> 
         assert len(app.query("*")) == widgets
 
 
+async def test_a_failed_poll_reports_itself_and_keeps_the_window(tmp_home: Path) -> None:
+    root = tmp_home / ".vibemaxxing"
+    seed_account(root, "one", active=True)
+    client = FakeHttpClient()
+    # HTTPError is not a VibeError, so envelope.collect lets it out: the poll
+    # that draws a 429 must report itself, not take the dashboard down with it.
+    client.queue(HTTPError(429, b'{"error": "rate_limited"}'))
+    ctx = _context(root, client)
+
+    app = tui.Dashboard(ctx)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        footer = _text(app.query_one("#footer", Static))
+
+        assert "refresh failed" in footer
+        assert "run: vibe list" in footer
+        assert app.is_running
+
+
 async def test_dashboard_refresh_has_no_unbounded_growth(tmp_home: Path) -> None:
     root = tmp_home / ".vibemaxxing"
     for n in range(5):
         seed_account(root, f"acct{n}", active=n == 0)
     client = FakeHttpClient()
     ctx = _context(root, client)
-    _queue(client, 5)
+    # Parsed once: re-reading the fixture 1000 times inside the window grows
+    # CPython's interned-string table by ~1.9 MB, which is the harness's memory
+    # and not the dashboard's. The app still sees a fresh response every call.
+    payload = fixture_usage()
+    _queue(client, 5, payload)
 
     marks: dict[int, tuple[int, int]] = {}
     app = tui.Dashboard(ctx)
     async with app.run_test() as pilot:
         tracemalloc.start()
+        # CPython interns pathlib's path parts and drops them again when the
+        # Path dies, so every cycle churns entries through the process-global
+        # interned-string table while sys.getunicodeinternedsize() stays flat.
+        # Rehashing that table allocates ~1.9 MB in one block, and a table that
+        # was first allocated before tracing began reads as 1.9 MB of growth no
+        # object holds. Churning it once here, inside the trace, makes a later
+        # rehash net to zero and the measurement the dashboard's own.
+        for n in range(120_000):
+            sys.intern(f"interned-table-warmup-{n}")
         for cycle in range(1, 201):
             # The fake's queue and request log are the test double's own memory,
             # not the dashboard's; reset them so the measurement is of the app.
             client.requests.clear()
             client.responses.clear()
-            _queue(client, 5)
+            _queue(client, 5, payload)
             ctx.now_s = NOW_S + cycle * 60.0
             await app.refresh_cycle()
             await pilot.pause()
