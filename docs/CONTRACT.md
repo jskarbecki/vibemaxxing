@@ -354,7 +354,8 @@ class Credential:
 def parse_credential(raw: Mapping[str, object]) -> Credential: ...     # StoreError on shape
 def parse_blob(raw: str) -> Credential: ...                            # {"claudeAiOauth": {…}}
 def credential_to_disk(c: Credential) -> dict[str, object]: ...        # reveal() site
-def credential_to_blob(c: Credential) -> str: ...                      # reveal() site
+def credential_to_blob(c: Credential,
+                       base: Mapping[str, object] | None = None) -> str: ...   # reveal() site
 def is_expired(c: Credential, *, now_ms: int, buffer_ms: int = EXPIRY_BUFFER_MS) -> bool: ...
 def login_lapsed(c: Credential, *, now_ms: int) -> bool: ...           # refreshTokenExpiresAt
 
@@ -375,6 +376,27 @@ def read_claude_identity(path: Path) -> Identity: ...   # ~/.claude.json oauthAc
 
 Identity comes from `~/.claude.json` → `oauthAccount`. **No request is spent on
 identity.**
+
+### The credential blob has siblings — measured live, 2026-09-15
+
+The blob Claude Code stores is **not** `{"claudeAiOauth": …}` alone. On this machine
+its top-level keys are `["claudeAiOauth", "mcpOAuth"]`, and more may appear.
+
+`credential_to_blob(c, base)` therefore **replaces only the `claudeAiOauth` member of
+`base`** and carries every sibling key through unchanged. Writing a bare
+`{"claudeAiOauth": …}` would delete the user's MCP server logins on the first switch.
+This is exactly the frozen isolation decision — one shared `~/.claude` history and MCP
+config, credentials swapped and nothing else — so MCP OAuth state must survive a switch
+rather than travel with an account.
+
+`base` is the blob currently in the Keychain, read immediately before the write. With
+`base=None` the result is `{"claudeAiOauth": …}` alone, which is correct only when the
+port holds nothing yet.
+
+The live `claudeAiOauth` carries exactly the seven documented fields:
+`accessToken`, `refreshToken`, `expiresAt`, `refreshTokenExpiresAt`, `scopes`,
+`subscriptionType`, `rateLimitTier`. `parse_blob` ignores unknown members rather than
+rejecting them — the server adds fields without warning (see §12).
 
 `login_lapsed` is what the UI surfaces *before* it happens: `refreshTokenExpiresAt` is
 when the login itself dies, and only a fresh `/login` fixes it.
@@ -412,10 +434,19 @@ def default_port() -> KeychainPort: ...            # MacKeychain on darwin, else
   produce a plaintext file — measured. We swap credentials, we do not isolate config
   dirs, so only the fixed-name item matters.
 
-**Switch order is fixed** (AC10): re-read the outgoing account's credential from the
-port and write it back to that account's file **before** overwriting the port with the
-incoming credential. Claude Code rotates the active token behind our back; skipping the
-resync loses that rotation and strands the outgoing account on a spent token.
+**Switch order is fixed** (AC10), and every step is load-bearing:
+
+1. Read the port once. Keep the whole blob — it has siblings (§7).
+2. Parse its `claudeAiOauth` and write it back to the **outgoing** account's file.
+   Claude Code rotates the active token behind our back; skipping this resync loses that
+   rotation and strands the outgoing account on a spent token.
+3. Build the incoming blob with `credential_to_blob(incoming, base=the blob from step 1)`
+   so `mcpOAuth` and any future sibling survive.
+4. Write the port.
+5. Update the `active` pointer.
+
+The resync in step 2 happens **before** the overwrite in step 4. A test with an
+in-memory fake port asserts that ordering.
 
 ---
 
@@ -666,6 +697,15 @@ def summarize(payload: Mapping[str, object]) -> Summary: ...
 
 An unknown kind renders and raises nothing (AC7). A `weekly_scoped` row without a
 display name falls through to the generic rule.
+
+**Measured live, 2026-09-15.** `severity` is not a two-valued flag: the live response
+carried `"warning"` alongside `"normal"`. Colour is chosen by treating `"normal"` as the
+calm state and **everything else** as elevated — never by inventing a percentage
+threshold. The live response also carried **22 top-level keys** where the fixture has 9,
+including a dozen codenamed members (`amber_ladder`, `tangelo`, `seven_day_opus`, …).
+`summarize` reads `limits` and `seven_day_breakdown` and ignores the rest, which is why
+an endpoint that grows new fields cannot break it. `seven_day_breakdown` carried
+`window_started_at`, absent from the fixture — same rule.
 
 ```python
 WEEKLY_ALL_KIND: Final = "weekly_all"
