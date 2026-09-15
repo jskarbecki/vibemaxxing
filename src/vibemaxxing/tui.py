@@ -155,6 +155,10 @@ class Dashboard(App[None]):
         # non-daemon and asyncio.run joins them at teardown, so `q` would leave
         # the process alive and unresponsive for the rest of an in-flight fetch.
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vibe-collect")
+        # Set once the first cycle has painted. The first refresh is deliberately
+        # off the message pump, so "mounted" and "showing something" are two
+        # different moments and a caller that needs the second must wait for it.
+        self.first_paint = asyncio.Event()
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="accounts"):
@@ -197,6 +201,7 @@ class Dashboard(App[None]):
             )
         finally:
             self._busy = False
+            self.first_paint.set()
 
     async def action_refresh_now(self) -> None:
         await self._tick()
