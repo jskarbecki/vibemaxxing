@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
-from vibemaxxing import __version__, credentials, envelope, history, oauth, store, tui
+from vibemaxxing import __version__, credentials, envelope, history, oauth, store, tui, web
 from vibemaxxing.credentials import Credential
 from vibemaxxing.envelope import AccountView
 from vibemaxxing.errors import NeedsLoginError, UsageError, VibeError
@@ -212,7 +212,7 @@ def cmd_dashboard(args: argparse.Namespace, ctx: Context) -> int:
 def cmd_usage(args: argparse.Namespace, ctx: Context) -> int:
     if args.web:
         check_loopback(args.host)
-        raise VibeError("the web dashboard ships in v0.0.5", "vibe usage --once")
+        return web.serve(ctx, port=args.port)
     return cmd_list(args, ctx)
 
 

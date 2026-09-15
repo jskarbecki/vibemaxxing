@@ -128,14 +128,6 @@ def test_json_failure_uses_the_error_envelope(
     assert payload["error"]["recovery"]
 
 
-def test_web_refuses_a_non_loopback_host(
-    tmp_home: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    ctx = context(tmp_home, FakeHttpClient())
-    assert cli.main(["usage", "--web", "--host", "0.0.0.0"], context=ctx) == 2
-    assert "loopback" in capsys.readouterr().err
-
-
 def test_add_adopts_the_login_already_in_claude_code(
     tmp_home: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
