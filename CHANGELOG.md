@@ -3,7 +3,7 @@
 Notable changes per release. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-09-16
 
 ### Added
 
@@ -42,5 +42,5 @@ a Textual dashboard, a loopback web dashboard, and a documented `--json` envelop
 
 Published to TestPyPI only, to prove the release pipeline.
 
-[Unreleased]: https://github.com/jskarbecki/vibemaxxing/compare/v0.1.0...HEAD
+[0.2.0]: https://github.com/jskarbecki/vibemaxxing/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jskarbecki/vibemaxxing/releases/tag/v0.1.0
