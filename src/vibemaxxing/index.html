@@ -13,8 +13,13 @@
     --dim: #6b6862;
     --accent: #3d6b99;
     --warn: #9a5115;
+
+    /* Everything below is mixed from the five above, so the palette has exactly
+       five decisions in it and both schemes stay in step by construction. */
     --hairline: color-mix(in oklab, var(--text) 14%, var(--bg));
+    --rule: color-mix(in oklab, var(--text) 7%, var(--bg));
     --track: color-mix(in oklab, var(--text) 9%, var(--bg));
+    --scroll: color-mix(in oklab, var(--text) 22%, var(--bg));
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -29,48 +34,65 @@
   * { box-sizing: border-box; }
   html, body { margin: 0; }
   body {
-    padding: 22px 40px 26px;
+    padding: 26px 36px 30px;
     background: var(--bg);
     color: var(--text);
     font: 400 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     font-variant-numeric: tabular-nums;
     -webkit-font-smoothing: antialiased;
   }
+  /* The surfaces nobody draws still belong to the palette. */
   ::selection { background: var(--accent); color: var(--bg); }
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  html { scrollbar-color: var(--scroll) transparent; scrollbar-width: thin; }
 
-  .wrap { max-width: 1400px; margin: 0 auto; }
-
-  .status {
-    display: flex;
-    justify-content: flex-end;
-    padding-bottom: 12px;
-    color: var(--dim);
-    font-size: 12px;
+  .wrap {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 1px 372px;
+    gap: 0 34px;
+    max-width: 1460px;
+    margin: 0 auto;
   }
+  .seam { background: var(--hairline); }
+
+  /* --- the ledger ---------------------------------------------------------- */
+
+  .ledger { min-width: 0; }
+  .masthead {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 14px;
+  }
+  h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.006em; }
+  .status { color: var(--dim); font-size: 12px; }
   .status[data-bad="1"] { color: var(--warn); }
 
   .accounts { margin: 0; padding: 0; list-style: none; }
   .account {
     display: grid;
-    grid-template-columns: 200px minmax(0, 1fr);
-    gap: 24px;
-    padding: 20px 0;
+    grid-template-columns: 186px minmax(0, 1fr);
+    gap: 26px;
+    padding: 17px 0;
+    border-top: 1px solid var(--hairline);
   }
-  .account + .account { border-top: 1px solid var(--hairline); }
 
-  .name { font-size: 15px; font-weight: 600; letter-spacing: -0.005em; }
+  .name { font-size: 14px; font-weight: 600; letter-spacing: -0.004em; }
   .badge {
-    margin-left: 8px;
+    margin-left: 7px;
+    padding: 1px 5px;
+    border: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
+    border-radius: 3px;
     color: var(--accent);
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.07em;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
-    vertical-align: 1px;
+    vertical-align: 2px;
   }
   .who {
-    margin-top: 3px;
+    margin-top: 4px;
     color: var(--dim);
     font-size: 12px;
     overflow: hidden;
@@ -78,46 +100,97 @@
     white-space: nowrap;
   }
   .plan {
-    margin-top: 2px;
-    color: var(--dim);
+    margin-top: 6px;
+    color: var(--text);
     font-size: 11px;
     font-weight: 500;
-    letter-spacing: 0.07em;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
   }
+  .plan[data-known="0"] { color: var(--dim); letter-spacing: 0; text-transform: none; }
 
-  .limits { display: grid; gap: 7px; align-content: start; }
+  .limits { display: grid; gap: 8px; align-content: start; }
   .limit {
     display: grid;
-    grid-template-columns: 168px minmax(0, 1fr) 46px 148px;
+    grid-template-columns: 152px minmax(60px, 1fr) 42px 132px;
     gap: 14px;
     align-items: center;
     font-size: 13px;
   }
   .limit-label { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .track { height: 6px; border-radius: 2px; background: var(--track); }
+  /* One bar height, one weight, one colour rule for every limit. Which row
+     matters is the reader's call, not a thing typography decides for them. */
+  .track { height: 5px; border-radius: 3px; background: var(--track); }
   .fill {
     display: block;
     width: 0;
     height: 100%;
-    border-radius: 2px;
+    border-radius: 3px;
     background: var(--accent);
     transition: width 240ms cubic-bezier(0.23, 1, 0.32, 1);
   }
   .fill[data-severity="warn"] { background: var(--warn); }
-  .percent { font-weight: 500; text-align: right; }
+  .percent { text-align: right; }
   .resets { color: var(--dim); font-size: 12px; text-align: right; }
 
-  .split { margin-top: 3px; }
+  .split { margin-top: 1px; }
   .split .value { grid-column: 2 / -1; color: var(--dim); font-size: 12px; }
   .state { color: var(--warn); font-size: 13px; }
+  .empty { padding: 40px 0; color: var(--dim); }
 
-  .pool {
-    margin-top: 4px;
-    padding-top: 16px;
-    border-top: 1px solid var(--hairline);
+  /* --- the week ------------------------------------------------------------ */
+
+  .rail { position: sticky; top: 26px; align-self: start; min-width: 0; }
+  .weeks { display: block; font-size: 40px; font-weight: 300; line-height: 1; letter-spacing: -0.035em; }
+  .weeks small {
+    margin-left: 3px;
     color: var(--dim);
+    font-size: 14px;
+    font-weight: 400;
+    letter-spacing: 0;
+  }
+  .zone { margin: 9px 0 20px; color: var(--dim); font-size: 12px; }
+
+  .week { display: block; width: 100%; height: auto; }
+  .week text { fill: var(--dim); font-size: 10px; }
+  .week .lane { fill: var(--text); font-size: 11px; }
+  .week .day { stroke: var(--rule); stroke-width: 1; }
+  .week .now { stroke: var(--accent); stroke-width: 1.5; }
+  .week .mark-now { fill: var(--accent); }
+  .week .rail-line { stroke: var(--track); stroke-width: 5; stroke-linecap: round; }
+  .week .mark { fill: var(--accent); }
+  .week .none { fill: var(--dim); font-size: 10px; }
+
+  .upcoming { margin: 22px 0 0; padding: 16px 0 0; border-top: 1px solid var(--hairline); }
+  .upcoming h2 { margin: 0 0 10px; color: var(--dim); font-size: 12px; font-weight: 400; }
+  .upcoming ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 7px; }
+  .upcoming li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 12px;
+    align-items: baseline;
     font-size: 13px;
+  }
+  .upcoming .when { color: var(--dim); font-size: 12px; }
+  .upcoming .in { color: var(--dim); font-size: 12px; text-align: right; min-width: 62px; }
+
+  @media (max-width: 1080px) {
+    body { padding: 22px 20px 26px; }
+    .wrap { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    .seam { display: none; }
+    .rail { position: static; margin-top: 26px; padding-top: 22px; border-top: 1px solid var(--hairline); }
+    .account { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+    /* Each limit becomes a stack: name and number, its bar, then its reset time.
+       The gap between limits has to beat the gap inside one, or a bar reads as
+       belonging to the line underneath it. */
+    .limits { gap: 16px; }
+    .limit { grid-template-columns: minmax(0, 1fr) 46px; row-gap: 5px; }
+    .limit .track { grid-column: 1 / -1; order: 1; }
+    .limit .resets { grid-column: 1 / -1; order: 2; text-align: left; }
+    /* Not a grid at this width: the breakdown is a sentence, and the 46px number
+       column would set one word per line. */
+    .split { display: block; }
+    .split .value { display: block; margin-top: 4px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -127,21 +200,47 @@
 </head>
 <body>
 <div class="wrap">
-  <div class="status" id="status">loading</div>
-  <ul class="accounts" id="accounts"></ul>
-  <div class="pool" id="pool"></div>
+  <main class="ledger">
+    <div class="masthead">
+      <h1>Pooled capacity</h1>
+      <div class="status" id="status">reading limits</div>
+    </div>
+    <ul class="accounts" id="accounts"></ul>
+    <div class="empty" id="empty" hidden>No accounts yet. Run <b>vibe add</b> to store one.</div>
+  </main>
+
+  <div class="seam" aria-hidden="true"></div>
+
+  <aside class="rail">
+    <span class="weeks" id="weeks">&nbsp;</span>
+    <div class="zone" id="zone"></div>
+    <svg class="week" id="week" role="img" aria-labelledby="week-title"></svg>
+    <section class="upcoming" id="upcoming" hidden>
+      <h2>Next resets</h2>
+      <ol id="resets"></ol>
+    </section>
+  </aside>
 </div>
 <script>
   var ENDPOINT = 'api/usage';
   var POLL_MS = 60000;
   var CLOCK_MS = 30000;
+  var DAY_MS = 86400000;
+  var WEEK_MS = 7 * DAY_MS;
 
   var statusEl = document.getElementById('status');
   var listEl = document.getElementById('accounts');
-  var poolEl = document.getElementById('pool');
+  var emptyEl = document.getElementById('empty');
+  var weeksEl = document.getElementById('weeks');
+  var zoneEl = document.getElementById('zone');
+  var weekEl = document.getElementById('week');
+  var upcomingEl = document.getElementById('upcoming');
+  var resetsEl = document.getElementById('resets');
+
   var signature = '';
   var nodes = [];
   var lastUpdate = '';
+  var latest = null;
 
   function el(tag, className, text) {
     var node = document.createElement(tag);
@@ -150,27 +249,52 @@
     return node;
   }
 
-  function clock(iso) {
+  function svg(tag, attrs) {
+    var node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (var key in attrs) {
+      if (attrs[key] !== undefined && attrs[key] !== null) node.setAttribute(key, attrs[key]);
+    }
+    return node;
+  }
+
+  // Every timestamp the server sends is UTC with an offset. `new Date` parses it
+  // and every `toLocale*` call below renders it in whatever zone the machine is
+  // set to, so a reader in New York reads New York time with no setting to find.
+  function at(iso) {
     var date = new Date(iso);
-    if (isNaN(date.getTime())) return iso;
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return isNaN(date.getTime()) ? null : date.getTime();
+  }
+
+  function clock(iso) {
+    var ms = at(iso);
+    if (ms === null) return iso;
+    return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  function dayTime(ms) {
+    var date = new Date(ms);
+    return date.toLocaleDateString([], { weekday: 'short' }) + ' ' +
+      date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+
+  function lasting(ms) {
+    var minutes = Math.round(ms / 60000);
+    if (minutes < 60) return minutes + ' min';
+    var hours = minutes / 60;
+    if (hours < 48) return (hours < 10 ? hours.toFixed(1) : Math.round(hours)) + ' hr';
+    return Math.round(hours / 24) + ' days';
   }
 
   function relative(iso, now) {
-    var date = new Date(iso);
-    if (isNaN(date.getTime())) return '';
-    var delta = date.getTime() - now;
+    var ms = at(iso);
+    if (ms === null) return '';
+    var delta = ms - now;
     if (delta <= 0) return 'reset due';
-    var minutes = Math.round(delta / 60000);
-    if (minutes < 60) return 'resets in ' + minutes + ' min';
-    if (delta < 12 * 3600000) {
-      var hours = Math.floor(minutes / 60);
-      var rest = minutes % 60;
-      return 'resets in ' + hours + ' hr' + (rest ? ' ' + rest + ' min' : '');
-    }
-    return 'resets ' + date.toLocaleDateString([], { weekday: 'short' }) + ' ' +
-      date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    if (delta < 12 * 3600000) return 'resets in ' + lasting(delta);
+    return 'resets ' + dayTime(ms);
   }
+
+  // --- the ledger ------------------------------------------------------------
 
   function buildAccount(account) {
     var item = el('li', 'account');
@@ -180,7 +304,12 @@
     identity.appendChild(name);
     var who = account.email || account.display_name || account.organization;
     if (who) identity.appendChild(el('div', 'who', who));
-    if (account.plan) identity.appendChild(el('div', 'plan', account.plan));
+    // The plan is fetched off the profile endpoint and cached on the account the
+    // first time an account has none, so it is present whether the login was
+    // adopted from Claude Code or made by us.
+    var plan = el('div', 'plan', account.plan || 'plan unknown');
+    plan.dataset.known = account.plan ? '1' : '0';
+    identity.appendChild(plan);
     item.appendChild(identity);
 
     var limits = el('div', 'limits');
@@ -230,19 +359,17 @@
       var iso = stamps[i].dataset.resetsAt;
       stamps[i].textContent = iso ? relative(iso, now) : '';
     }
-  }
-
-  function paintPool(pool) {
-    var parts = [pool.accounts + (pool.accounts === 1 ? ' account' : ' accounts'),
-      pool.remaining_account_weeks + ' account-weeks left'];
-    if (typeof pool.dry_in_seconds === 'number') {
-      parts.push('dry in ' + (pool.dry_in_seconds / 3600).toFixed(1) + ' hr');
+    var spans = document.querySelectorAll('.upcoming .in');
+    for (var j = 0; j < spans.length; j++) {
+      var when = at(spans[j].dataset.at);
+      spans[j].textContent = when === null || when <= now ? 'due' : 'in ' + lasting(when - now);
     }
-    poolEl.textContent = parts.join(' · ');
+    // The left edge of the week is this instant, so the whole chart slides.
+    if (latest) drawWeek(latest, now);
   }
 
-  function paint(envelope) {
-    envelope.accounts.forEach(function (account, index) {
+  function paintAccounts(accounts) {
+    accounts.forEach(function (account, index) {
       var refs = nodes[index];
       account.rows.forEach(function (row, position) {
         var target = refs.rows[position];
@@ -251,12 +378,12 @@
         var width = value + '%';
         if (target.fill.style.width !== width) target.fill.style.width = width;
         // Colour comes from severity alone. "normal" is calm and everything
-        // else is elevated — never a percentage threshold we invented.
+        // else is elevated, never a percentage threshold we invented.
         // null is absent, not elevated. The TUI and the CLI both treat it as
         // calm, and three surfaces must not disagree about one envelope.
         var elevated = row.severity != null && row.severity !== 'normal';
         target.fill.dataset.severity = elevated ? 'warn' : 'normal';
-        target.percent.textContent = known ? row.percent + '%' : '—';
+        target.percent.textContent = known ? row.percent + '%' : '-';
         target.resets.dataset.resetsAt = row.resets_at || '';
       });
       if (refs.split) {
@@ -265,9 +392,106 @@
         }).join(' · ');
       }
     });
-    paintPool(envelope.pool);
-    paintTimes();
   }
+
+  // --- the week --------------------------------------------------------------
+
+  var LABELS = 62, TRACK_X = 68, TRACK_END = 366, HEAD = 26, LANE = 30;
+
+  function drawWeek(envelope, now) {
+    var accounts = envelope.accounts;
+    var height = HEAD + accounts.length * LANE + 8;
+    weekEl.setAttribute('viewBox', '0 0 372 ' + height);
+    weekEl.textContent = '';
+    var title = svg('title');
+    title.id = 'week-title';
+    title.textContent = 'The next seven days, and when each account resets';
+    weekEl.appendChild(title);
+
+    function x(ms) {
+      return TRACK_X + (ms - now) / WEEK_MS * (TRACK_END - TRACK_X);
+    }
+
+    // Local midnights, not fixed 24h steps from now: the boundaries have to land
+    // where the reader's own clock puts them, across a DST change.
+    var edges = [now];
+    var cursor = new Date(now);
+    cursor.setHours(24, 0, 0, 0);
+    while (cursor.getTime() < now + WEEK_MS) {
+      edges.push(cursor.getTime());
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    edges.push(now + WEEK_MS);
+
+    edges.slice(1, -1).forEach(function (edge) {
+      var line = x(edge);
+      weekEl.appendChild(svg('line', { class: 'day', x1: line, y1: HEAD - 8, x2: line, y2: height - 8 }));
+    });
+
+    // The name sits over the day it names, not over the midnight that starts it.
+    // Labelling boundaries put Friday's name where Thursday lives, and dropped
+    // Thursday entirely when tonight was too close to "now" to fit a word.
+    for (var day = 0; day < edges.length - 1; day++) {
+      var from = x(edges[day]), to = x(edges[day + 1]);
+      // Wide enough for the word. The part-day at each end of the window is
+      // usually not; the left one is already called "now".
+      if (to - from < 20) continue;
+      var name = svg('text', { x: (from + to) / 2, y: 11, 'text-anchor': 'middle' });
+      name.textContent = new Date(edges[day]).toLocaleDateString([], { weekday: 'short' });
+      weekEl.appendChild(name);
+    }
+
+    var nowLabel = svg('text', { class: 'mark-now', x: TRACK_X - 3, y: 11, 'text-anchor': 'end' });
+    nowLabel.textContent = 'now';
+    weekEl.appendChild(nowLabel);
+    weekEl.appendChild(svg('line', {
+      class: 'now', x1: TRACK_X, y1: HEAD - 8, x2: TRACK_X, y2: height - 8
+    }));
+
+    var due = {};
+    envelope.resets.forEach(function (reset) { due[reset.alias] = at(reset.at); });
+
+    accounts.forEach(function (account, index) {
+      var y = HEAD + index * LANE + LANE / 2;
+      var alias = svg('text', { class: 'lane', x: LABELS, y: y + 4, 'text-anchor': 'end' });
+      alias.textContent = account.alias;
+      weekEl.appendChild(alias);
+      weekEl.appendChild(svg('line', {
+        class: 'rail-line', x1: TRACK_X, y1: y, x2: TRACK_END, y2: y
+      }));
+
+      var when = due[account.alias];
+      if (when === undefined || when === null) {
+        var absent = svg('text', { class: 'none', x: TRACK_X + 6, y: y + 4 });
+        absent.textContent = 'no weekly limit reported';
+        weekEl.appendChild(absent);
+        return;
+      }
+      var spot = Math.max(TRACK_X, Math.min(x(when), TRACK_END));
+      weekEl.appendChild(svg('circle', { class: 'mark', cx: spot, cy: y, r: 4.5 }));
+    });
+  }
+
+  function paintResets(resets, now) {
+    if (!resets.length) {
+      upcomingEl.hidden = true;
+      return;
+    }
+    upcomingEl.hidden = false;
+    resetsEl.textContent = '';
+    resets.forEach(function (reset) {
+      var ms = at(reset.at);
+      var row = el('li');
+      row.appendChild(el('span', null, reset.alias));
+      row.appendChild(el('span', 'when', ms === null ? '' : dayTime(ms)));
+      var countdown = el('span', 'in');
+      countdown.dataset.at = reset.at || '';
+      row.appendChild(countdown);
+      resetsEl.appendChild(row);
+    });
+  }
+
+  // --- wiring ----------------------------------------------------------------
 
   function render(envelope) {
     // Rebuild only when the shape changes; otherwise every value is repainted
@@ -286,8 +510,18 @@
       envelope.accounts.forEach(function (account) {
         listEl.appendChild(buildAccount(account));
       });
+      emptyEl.hidden = envelope.accounts.length > 0;
     }
-    paint(envelope);
+    latest = envelope;
+    paintAccounts(envelope.accounts);
+
+    weeksEl.textContent = '';
+    weeksEl.appendChild(document.createTextNode(envelope.pool.remaining_account_weeks.toFixed(2)));
+    weeksEl.appendChild(el('small', null, ' of ' + envelope.pool.accounts.toFixed(2) + ' account-weeks'));
+    zoneEl.textContent = 'Times in ' + Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    paintResets(envelope.resets, Date.now());
+    paintTimes();
   }
 
   function load() {

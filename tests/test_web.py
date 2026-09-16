@@ -201,11 +201,36 @@ def test_the_page_keeps_the_ported_design_properties() -> None:
     assert len(re.findall(r"#[0-9a-fA-F]{3,8}\b", page)) == 10
     assert "font-variant-numeric: tabular-nums" in page
     assert "prefers-color-scheme: dark" in page
+    # Every other colour on the page is mixed from those ten, so the palette has
+    # five decisions in it and both schemes stay in step by construction.
+    assert page.count("color-mix(in oklab") >= 5
+    # An em dash is not a number. The unknown-percent cell reads as a ledger nil.
+    assert "\u2014" not in page
     # One motion in the whole page, plus its opt-out. Nothing else animates.
     assert page.count("transition:") == 2
     assert page.count("transition: width 240ms cubic-bezier(0.23, 1, 0.32, 1)") == 1
     assert page.count("transition: none") == 1
     assert "prefers-reduced-motion" in page
+
+
+def test_the_page_is_a_ledger_beside_a_week() -> None:
+    """The split is the design: accounts on the left, the week on the right, one
+    column under 1080px. The timeline is inline SVG with no library, because the
+    page is package data served over loopback with no network."""
+    page = web.page()
+
+    assert "grid-template-columns: minmax(0, 1fr) 1px 372px" in page
+    assert "@media (max-width: 1080px)" in page
+    assert "position: sticky" in page
+    # No CDN, no bundle, no chart library: every byte the browser runs is here.
+    assert "<script src" not in page
+    assert "http://www.w3.org/2000/svg" in page
+    for absent in ("cdn.", "unpkg", "jsdelivr", "//fonts."):
+        assert absent not in page, absent
+    # Every rendered time goes through toLocale*, which reads the machine's own
+    # zone, and the page names that zone so the reader can see which one it used.
+    assert "resolvedOptions().timeZone" in page
+    assert "toLocaleDateString" in page and "toLocaleTimeString" in page
 
 
 # --- the entry point the CLI calls -------------------------------------------

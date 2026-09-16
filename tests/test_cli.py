@@ -68,7 +68,7 @@ def test_list_json_envelope_is_stable(tmp_home: Path, capsys: pytest.CaptureFixt
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["schema"] == ENVELOPE_SCHEMA
-    assert set(payload) == {"schema", "generated_at", "accounts", "pool"}
+    assert set(payload) == {"schema", "generated_at", "accounts", "pool", "resets"}
     assert set(payload["pool"]) == {"accounts", "remaining_account_weeks", "dry_in_seconds"}
     assert payload["pool"]["accounts"] == 2
 

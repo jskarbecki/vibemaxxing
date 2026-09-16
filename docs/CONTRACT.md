@@ -681,9 +681,19 @@ schema. AC17 pins it.
     "accounts": 2,
     "remaining_account_weeks": 0.44,
     "dry_in_seconds": null
-  }
+  },
+  "resets": [
+    {"alias": "work", "at": "2026-09-19T13:00:00+00:00"},
+    {"alias": "old", "at": "2026-09-22T21:00:00+00:00"}
+  ]
 }
 ```
+
+`resets` is every account's **weekly rollover**, soonest first, and `[]` when no account
+reports one. The `weekly_all` row only: the session row rolls over every few hours and
+would bury the weekly ones it overlaps, and `weekly_scoped` rolls over within a minute of
+`weekly_all` on the same account. An account that is not `ok`, or whose `resets_at` does
+not parse, contributes no entry rather than one at a guessed moment.
 
 **Every documented key is present on every entry**, whatever the state — absent data is
 `null` or `[]`, never a missing key. The single list of those keys lives in
@@ -761,6 +771,33 @@ account *shape* changes and otherwise repaints in place — that is also what ke
 page left open for days from growing. Colour comes from the payload's `severity`, never
 from an invented percentage threshold. The row list is rendered from `rows`, never from
 a hardcoded three-row layout.
+
+Exactly **ten** hex literals, five per scheme, all of them inside `:root`. Every other
+colour on the page — hairlines, tracks, the badge border, the scrollbar — is
+`color-mix`ed from those five, so the palette has five decisions in it and both schemes
+stay in step by construction. `tests/test_web.py` counts them.
+
+The page is a **split**: the account ledger on the left, the week on the right,
+collapsing to one column under 1080px. The rail renders `resets` as inline SVG with no
+library and no build step — the page is package data served over loopback and must work
+with no network at all.
+
+The week runs from **this instant** to seven days out, one lane per account, a dot where
+that account's weekly limit rolls over. The left edge is now, so the whole thing slides
+on the same 30 s timer that repaints the relative reset times.
+
+Every rendered time goes through `toLocaleDateString` / `toLocaleTimeString`, which read
+the machine's own zone — a reader in New York reads New York time with no setting to
+find — and the rail names the zone it resolved so that is visible rather than assumed.
+Day boundaries are **local midnights**, walked with `setDate`, not fixed 24 h steps from
+now: a fixed step drifts a day's worth of gridline across a DST change. A weekday name
+is centred over the day it names, not over the midnight that starts it, and is dropped
+when its column is under 20px — which is the part-day at each end, and the left one is
+already called "now".
+
+Every limit row is drawn the same: one bar height, one weight, one colour rule. Colour
+comes from the payload's `severity` and nothing else. Which row matters is the reader's
+call, not something typography decides for them.
 
 ---
 

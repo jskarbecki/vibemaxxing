@@ -19,7 +19,7 @@ from vibemaxxing.credentials import EMPTY_IDENTITY, Credential, Identity
 from vibemaxxing.errors import VibeError
 from vibemaxxing.httpclient import HttpClient, HTTPError
 from vibemaxxing.models import AccountState
-from vibemaxxing.pool import AccountUsage, pool_remaining
+from vibemaxxing.pool import WEEKLY_ALL_KIND, AccountUsage, pool_remaining
 from vibemaxxing.redact import scrub
 from vibemaxxing.usage import Summary
 
@@ -234,6 +234,37 @@ def pool_weeks(views: Sequence[AccountView]) -> float:
     )
 
 
+def _epoch(stamp: str) -> float | None:
+    try:
+        return datetime.fromisoformat(stamp).timestamp()
+    except ValueError:
+        # An unparseable stamp drops that one reset off the list. The server owns
+        # this string's format, and guessing at a new one would place a marker at
+        # an invented moment rather than omit it.
+        return None
+
+
+def resets(views: Sequence[AccountView]) -> list[dict[str, object]]:
+    """Each account's weekly rollover, soonest first.
+
+    The ``weekly_all`` row only. The session row rolls over every few hours and
+    would bury the weekly ones it overlaps, and ``weekly_scoped`` rolls over
+    within a minute of ``weekly_all`` on the same account.
+    """
+    found: list[tuple[float, dict[str, object]]] = []
+    for view in views:
+        if view.state is not AccountState.OK or view.summary is None:
+            continue
+        for row in view.summary.rows:
+            if row.kind != WEEKLY_ALL_KIND:
+                continue
+            at_s = _epoch(row.resets_at) if row.resets_at else None
+            if at_s is not None:
+                found.append((at_s, {"alias": view.alias, "at": _iso(at_s)}))
+            break
+    return [entry for _, entry in sorted(found, key=lambda pair: pair[0])]
+
+
 def build(
     views: Sequence[AccountView], *, now_s: float, dry_in: timedelta | None = None
 ) -> dict[str, object]:
@@ -246,6 +277,7 @@ def build(
             "remaining_account_weeks": pool_weeks(views),
             "dry_in_seconds": None if dry_in is None else int(dry_in.total_seconds()),
         },
+        "resets": resets(views),
     }
 
 
