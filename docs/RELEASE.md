@@ -8,23 +8,23 @@ good. Nothing in this repository publishes on its own — the workflow in
 Status as of 2026-09-16: the history rewrite is pushed and verified clean on GitHub,
 `v0.2.0rc1` is published to TestPyPI and was installed and exercised from that index,
 `v0.2.0` is tagged and waiting. The name `vibemaxxing` is still unclaimed on PyPI and the
-repository is still private. **Two things remain before the repo can go public: the
-`pypi` environment, and the decision itself.**
+repository is still private. The `pypi` environment and the PyPI trusted publisher are
+both in place, so **the only thing left before going public is the decision itself.**
 
 ---
 
 ## 1. Blockers — it cannot ship without these
 
-- [ ] **Create the `pypi` environment on the repo.** Only `testpypi` exists today, so the
-      PyPI job would fail at the environment gate.
-      Settings → Environments → New environment → name it exactly `pypi`.
-      Add yourself as a required reviewer if you want a manual gate on every upload.
-- [ ] **Register the PyPI trusted publisher.** No API token is stored anywhere and none
-      should be. On <https://pypi.org/manage/account/publishing/>, add a *pending*
-      publisher:
-      - PyPI project name: `vibemaxxing`
-      - Owner: `jskarbecki`  ·  Repository: `vibemaxxing`
-      - Workflow: `publish.yml`  ·  Environment: `pypi`
+- [x] **The `pypi` environment exists** on the repository. The workflow's `environment:
+      pypi` now resolves.
+- [x] **The PyPI trusted publisher is registered** as a pending publisher: `vibemaxxing`
+      · `jskarbecki/vibemaxxing` · `publish.yml` · environment `pypi`. No API token is
+      stored anywhere. Two different websites: PyPI's "Environment name" field only
+      declares which GitHub environment it will trust, it does not create one.
+- [ ] **Add yourself as a required reviewer on the `pypi` environment** — do this right
+      after the repo goes public. GitHub refuses the rule on a private repo without a paid
+      plan (HTTP 422), and it is free on a public one. With it, the real publish pauses
+      for your click instead of uploading unattended.
 - [x] **Version cut.** `0.2.0`, tagged `v0.2.0` and pushed. `uv.lock` records the
       project's own version and CI runs `uv sync --locked` first, so the lockfile moves
       with `pyproject.toml` in the same commit; leaving it behind fails the release run
