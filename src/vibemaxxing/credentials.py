@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Final
 
 from vibemaxxing.errors import StoreError
+from vibemaxxing.fsutil import write_private
 from vibemaxxing.redact import Secret
 
 EXPIRY_BUFFER_MS: Final = 5 * 60 * 1000
@@ -157,6 +158,60 @@ def is_expired(c: Credential, *, now_ms: int, buffer_ms: int = EXPIRY_BUFFER_MS)
 
 def login_lapsed(c: Credential, *, now_ms: int) -> bool:
     return c.refresh_token_expires_at_ms is not None and now_ms >= c.refresh_token_expires_at_ms
+
+
+def write_claude_identity(path: Path, identity: Identity) -> None:
+    """Point Claude Code's cached profile at ``identity``.
+
+    Swapping the credential is not enough on its own. Claude Code caches the
+    logged-in profile in ``oauthAccount`` and skips the refetch for 24h while
+    ``profileFetchedAt`` is fresh, so after a switch it runs on the incoming
+    token while still naming the outgoing account -- email, org uuid and rate
+    limit tier all belong to the account that just left.
+
+    Dropping ``profileFetchedAt`` is what makes this work on a machine we know
+    nothing about: Claude Code refetches the profile with the incoming token on
+    its next start and fills in the members we have no way to know (billingType,
+    seatTier, the trial flags), so a fresh install needs no priming and no
+    hand-written config.
+    """
+    try:
+        parsed: object = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        parsed = {}
+    except (OSError, ValueError):
+        # Claude Code's file, and a corrupt one is not ours to rewrite. The
+        # credential swap has already landed, so the switch is still real; the
+        # name Claude Code prints stays stale until it repairs the file itself.
+        return
+    if not isinstance(parsed, dict):
+        return
+
+    config = {str(key): value for key, value in parsed.items()}
+    existing = config.get("oauthAccount")
+    account = (
+        {str(key): value for key, value in existing.items()} if isinstance(existing, dict) else {}
+    )
+    account.pop("profileFetchedAt", None)
+    for key, value in (
+        ("emailAddress", identity.email),
+        ("accountUuid", identity.account_uuid),
+        ("organizationName", identity.organization_name),
+        ("organizationUuid", identity.organization_uuid),
+        ("seatTier", identity.seat_tier),
+        ("billingType", identity.billing_type),
+        ("displayName", identity.display_name),
+    ):
+        if value is not None:
+            account[key] = value
+    config["oauthAccount"] = account
+
+    try:
+        # Two-space JSON with no trailing newline, the shape Claude Code writes,
+        # so a switch does not show up as a whole-file rewrite to the user.
+        write_private(path, json.dumps(config, indent=2))
+    except OSError:
+        return
 
 
 def read_claude_identity(path: Path) -> Identity:

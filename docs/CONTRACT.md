@@ -223,6 +223,13 @@ passes it down. No test may reach the network.
 Allowed hosts, and no others: `claude.ai`, `platform.claude.com`, `api.anthropic.com`.
 No version pings, no analytics, no telemetry.
 
+Every request carries `User-Agent: vibemaxxing/<version>` unless the caller sets its own.
+Cloudflare fronts all three hosts and rejects urllib's default `Python-urllib/3.x` with a
+403 `error code: 1010` before the request reaches the API -- with no agent named, the token
+exchange at the end of `vibe add` fails every time. This is the one thing `httpclient`
+takes from the package: `__version__` off `vibemaxxing/__init__`, which imports no
+submodule, so the leaf stays acyclic.
+
 ### `models.py`
 
 `AccountState` (§3) and `Sample`:
@@ -488,9 +495,19 @@ stdout pipe, never in argv.
 3. Build the incoming blob with `credential_to_blob(incoming, base=the blob from step 1)`
    so `mcpOAuth` and any future sibling survive.
 4. Write the port.
-5. Update the `active` pointer.
+5. Repoint `oauthAccount` in `~/.claude.json` at the incoming account and delete its
+   `profileFetchedAt`. Claude Code caches the logged-in profile there and skips the
+   refetch for 24h while that stamp is fresh, so a credential-only switch leaves it
+   running on the incoming token while naming the **outgoing** account — measured on
+   2.1.272. Dropping the stamp makes Claude Code refetch with the incoming token and
+   fill the members we cannot know (`billingType`, `seatTier`, the trial flags), so a
+   machine that has never run `claude` needs no priming. Every other key in the file is
+   preserved; a missing file is created, a corrupt one is left alone.
+6. Update the `active` pointer.
 
-The resync in step 2 happens **before** the overwrite in step 4. A test with an
+Step 5 happens **after** step 4: the identity file only says who the credential belongs
+to, so it must never name the incoming account while the port still holds the outgoing
+one. The resync in step 2 happens **before** the overwrite in step 4. A test with an
 in-memory fake port asserts that ordering.
 
 ---
@@ -535,7 +552,9 @@ def parse_pasted_code(paste: str, expected_state: str) -> tuple[str, str]: ...
 
 Phase A named PKCE for this module but specified no generator, so Phase D added
 `new_verifier()` (`secrets.token_urlsafe(32)`, 43 chars, inside RFC 7636's 43-128) and
-`new_state()` (`secrets.token_urlsafe(16)`).
+`new_state()` (`secrets.token_urlsafe(32)`, 43 chars). The authorize endpoint
+validates the state's length: a 22-char state renders the consent page but fails the
+Authorize click with "Invalid request format".
 
 Split on the **first** `#`. No `#` → `PasteFormatError`. State half ≠ `expected_state` →
 `StateMismatchError`. Returns `(code, state)`.

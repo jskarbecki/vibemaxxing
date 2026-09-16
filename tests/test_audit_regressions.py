@@ -86,6 +86,35 @@ def test_redirect_never_carries_the_bearer_token_off_the_allowlist(
     assert seen.get("auth") is None, "the token crossed a redirect to an unlisted host"
 
 
+def test_every_request_names_a_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cloudflare answers urllib's default "Python-urllib/3.x" with 403
+    "error code: 1010" on all three allowed hosts, which killed the token
+    exchange at the end of every login. Verified 2026-09-15 against
+    platform.claude.com: no User-Agent -> 403, "vibemaxxing/0.1.0" -> a real
+    invalid_grant 400."""
+    seen: dict[str, str | None] = {}
+
+    class Echo(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            seen["ua"] = self.headers.get("User-Agent")
+            self.send_response(200)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *args: object) -> None: ...
+
+    server, port = _server(Echo)
+    monkeypatch.setattr(httpclient, "ALLOWED_HOSTS", frozenset({"127.0.0.1"}))
+    try:
+        UrllibClient().request("GET", f"http://127.0.0.1:{port}/api", headers={})
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert seen.get("ua") == httpclient.USER_AGENT
+    assert "urllib" not in (seen.get("ua") or "")
+
+
 def test_switch_never_attributes_the_keychain_blob_to_the_wrong_account(
     tmp_home: Path,
 ) -> None:

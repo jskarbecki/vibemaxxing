@@ -10,10 +10,16 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final, Protocol
 
+from vibemaxxing import __version__
 from vibemaxxing.errors import NetworkError
 
 ALLOWED_HOSTS: Final = frozenset({"claude.ai", "platform.claude.com", "api.anthropic.com"})
 DEFAULT_TIMEOUT_S: Final = 10.0
+# Cloudflare fronts all three hosts and answers urllib's default
+# "Python-urllib/3.x" with 403 "error code: 1010" before the request ever
+# reaches the API, so every login died at the token exchange. Any named
+# agent gets through; this one says who we actually are.
+USER_AGENT: Final = f"vibemaxxing/{__version__}"
 
 
 class HTTPError(Exception):
@@ -102,7 +108,8 @@ class UrllibClient:
                 + ", ".join(sorted(ALLOWED_HOSTS)),
                 "vibe list",
             )
-        request = urllib.request.Request(url, data=body, headers=dict(headers), method=method)
+        sent = {"User-Agent": USER_AGENT, **headers}
+        request = urllib.request.Request(url, data=body, headers=sent, method=method)
         try:
             with _OPENER.open(request, timeout=timeout_s) as response:
                 return HttpResponse(int(response.status), response.read())

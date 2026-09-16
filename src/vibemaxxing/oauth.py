@@ -60,7 +60,10 @@ def new_verifier() -> str:
 
 
 def new_state() -> str:
-    return secrets.token_urlsafe(16)
+    # 43 chars, same as the verifier. The authorize endpoint rejects a shorter
+    # state at the Authorize click with "Invalid request format" -- the consent
+    # page still renders, so a short state fails only at the very last step.
+    return secrets.token_urlsafe(32)
 
 
 def build_authorize_url(verifier: str, state: str) -> str:
