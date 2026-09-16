@@ -17,15 +17,16 @@ from vibemaxxing.httpclient import HttpClient
 from vibemaxxing.redact import Secret
 
 USAGE_URL: Final = "https://api.anthropic.com/api/oauth/usage"
+PROFILE_URL: Final = "https://api.anthropic.com/api/oauth/profile"
 BETA_HEADER: Final = "oauth-2025-04-20"
 
 _LABELS: Final = {"session": "Session", "weekly_all": "Weekly · all models"}
 
 
-def fetch_usage(client: HttpClient, token: Secret, *, timeout_s: float = 10.0) -> dict[str, object]:
+def _get(client: HttpClient, url: str, token: Secret, timeout_s: float) -> dict[str, object]:
     response = client.request(
         "GET",
-        USAGE_URL,
+        url,
         # One of the five permitted reveal() sites (contract s5). The value goes
         # into the header and nowhere else — not into the URL, not into a log.
         headers={
@@ -35,6 +36,31 @@ def fetch_usage(client: HttpClient, token: Secret, *, timeout_s: float = 10.0) -
         timeout_s=timeout_s,
     )
     return response.json()
+
+
+def fetch_usage(client: HttpClient, token: Secret, *, timeout_s: float = 10.0) -> dict[str, object]:
+    return _get(client, USAGE_URL, token, timeout_s)
+
+
+def fetch_plan(
+    client: HttpClient, token: Secret, *, timeout_s: float = 10.0
+) -> tuple[str | None, str | None]:
+    """The account's subscription type and rate limit tier, from the profile endpoint.
+
+    Neither value is anywhere else: the usage response names no plan (measured —
+    22 top-level keys, none of them a plan), and the token endpoint answers a
+    `vibe add` login without one either, so an account we logged in ourselves has
+    nothing to show until this runs. ``organization_type`` reads "claude_max" /
+    "claude_pro"; the prefix comes off so the stored value matches what Claude
+    Code writes into the credential blob, which is the same blob a switch ports.
+    """
+    payload = _get(client, PROFILE_URL, token, timeout_s)
+    organization: object = payload.get("organization")
+    if not isinstance(organization, Mapping):
+        return None, None
+    kind = _text(organization.get("organization_type"))
+    tier = _text(organization.get("rate_limit_tier"))
+    return (kind.removeprefix("claude_") if kind else None), tier
 
 
 @dataclass(frozen=True)

@@ -184,7 +184,7 @@ Rules, in force everywhere:
 3. `.reveal()` may be called in **exactly five places**, and nowhere else:
    - `credentials.credential_to_disk()` — writing the account/stash file
    - `credentials.credential_to_blob()` — writing the Keychain / credentials file
-   - `usage.fetch_usage()` — the `Authorization` header
+   - `usage._get()` — the `Authorization` header of both OAuth API GETs
    - `oauth.refresh()` and `oauth.exchange_code()` — the POST body
    - `cli` — the `CLAUDE_CODE_OAUTH_TOKEN` value in the child env of `vibe run`
    The Phase-F credential-leak lens greps for every other `.reveal(`.
@@ -636,7 +636,7 @@ schema. AC17 pins it.
       "email": "jan@intra-ai.de",
       "display_name": "Jan",
       "organization": "Intra AI",
-      "plan": "max",
+      "plan": "max 20x",
       "updated_at": "2026-09-15T10:39:12+00:00",
       "rows": [
         {"kind": "session", "label": "Session", "percent": 0,
@@ -749,9 +749,12 @@ a hardcoded three-row layout.
 
 ```python
 USAGE_URL: Final = "https://api.anthropic.com/api/oauth/usage"
+PROFILE_URL: Final = "https://api.anthropic.com/api/oauth/profile"
 BETA_HEADER: Final = "oauth-2025-04-20"
 
 def fetch_usage(client: HttpClient, token: Secret, *, timeout_s: float = 10.0) -> dict[str, object]: ...
+def fetch_plan(client: HttpClient, token: Secret,
+               *, timeout_s: float = 10.0) -> tuple[str | None, str | None]: ...
 
 @dataclass(frozen=True)
 class Row:
@@ -784,6 +787,24 @@ and the web page behave identically on a bad day; before Phase E it escaped `col
 `fetch_usage` sends `Authorization: Bearer <token>` and `anthropic-beta: oauth-2025-04-20`,
 and nothing else. Measured 2026-09-15: those two headers alone return
 `HTTP/1.1 200 OK` with `Content-Type: application/json`, so no `Accept` header is added.
+
+`fetch_plan` reads `organization.organization_type` and `organization.rate_limit_tier`
+off the profile endpoint and drops the `claude_` prefix, so the stored value is the one
+Claude Code writes (`max`, `pro`) and a switch ports a blob in Claude Code's own
+vocabulary. It exists because the plan is in neither of the two places a poll already
+looks: the usage response names no plan (measured 2026-09-16: 22 top-level keys, none of
+them a plan), and the token endpoint answers a `vibe add` login without one, so an
+account we logged in ourselves showed no plan at all while an imported one showed
+`max`. `envelope._fill_plan` therefore fetches it **once**, on the first poll of an
+account whose credential has no `subscriptionType`, and writes it back to the account
+file; every later poll reads it off disk. A failing profile endpoint costs the plan
+label and nothing else — the account keeps its usage rows and its `ok` state.
+
+The envelope's `plan` is that label, not the raw field: `subscriptionType` plus the
+multiplier parsed off the tier (`default_claude_max_20x` → `max 20x`), because two Max
+accounts on different multipliers have very different weekly budgets and the raw `max`
+answers "which plan" only halfway. An unrecognised tier renders the bare subscription
+type rather than a guessed number.
 
 `summarize` renders from the **`limits` array**, never from the sibling `five_hour` /
 `seven_day` objects. `kind` values are open-ended. Labels:

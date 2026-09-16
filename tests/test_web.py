@@ -22,11 +22,14 @@ from tests.fakes import (
     FakeHttpClient,
     FakeKeychain,
     fixture_usage,
+    make_credential,
     seed_account,
 )
-from vibemaxxing import cli, envelope, web
+from vibemaxxing import cli, envelope, store, usage, web
 from vibemaxxing.envelope import ENVELOPE_SCHEMA
 from vibemaxxing.errors import VibeError
+from vibemaxxing.httpclient import HTTPError
+from vibemaxxing.models import AccountState
 from vibemaxxing.redact import REDACTED, Secret
 
 NOW_S = 1_757_930_000.0
@@ -223,3 +226,46 @@ def test_snapshot_is_the_section_10_envelope(tmp_home: Path) -> None:
     assert set(accounts[0]) == ENVELOPE_ACCOUNT_KEYS
     assert accounts[0]["alias"] == "work"
     assert accounts[0]["active"] is True
+
+
+def test_a_plan_less_account_backfills_its_plan_once(tmp_home: Path) -> None:
+    """An account added by our own login has no subscriptionType, so the first
+    fetch asks the profile endpoint and writes the answer to the account file."""
+    root = tmp_home / ".vibemaxxing"
+    seed_account(root, "work", credential=make_credential(subscription_type=None))
+    client = FakeHttpClient()
+    client.queue_json(
+        200,
+        {
+            "organization": {
+                "organization_type": "claude_max",
+                "rate_limit_tier": "default_claude_max_20x",
+            }
+        },
+    )
+    client.queue_json(200, fixture_usage())
+
+    views = envelope.collect(root, client=client, now_s=NOW_S)
+
+    assert [view.plan for view in views] == ["max 20x"]
+    stored = store.read_account(root, "work").credential
+    assert (stored.subscription_type, stored.rate_limit_tier) == ("max", "default_claude_max_20x")
+
+    # Second pass: the plan is on disk now, so only the usage request goes out.
+    client.queue_json(200, fixture_usage())
+    assert [view.plan for view in envelope.collect(root, client=client, now_s=NOW_S)] == ["max 20x"]
+    assert [request.url for request in client.requests].count(usage.PROFILE_URL) == 1
+
+
+def test_a_failing_profile_endpoint_costs_only_the_plan(tmp_home: Path) -> None:
+    root = tmp_home / ".vibemaxxing"
+    seed_account(root, "work", credential=make_credential(subscription_type=None))
+    client = FakeHttpClient()
+    client.queue(HTTPError(500, b"boom"))
+    client.queue_json(200, fixture_usage())
+
+    views = envelope.collect(root, client=client, now_s=NOW_S)
+
+    assert views[0].plan is None
+    assert views[0].state is AccountState.OK
+    assert views[0].summary is not None

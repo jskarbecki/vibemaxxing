@@ -7,6 +7,7 @@ Keychain blob share one shape and there is no translation layer.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,10 @@ _RECOVERY: Final = "vibe add"
 # A blob with no claudeAiOauth member means Claude Code is not logged in here,
 # so telling the user to re-run the command that just failed is dead advice.
 _LOGIN: Final = "claude /login"
+
+# "default_claude_max_20x" -> 20. The tier string is the only place the plan
+# multiplier appears; subscriptionType is just "max" for a 5x and a 20x alike.
+_TIER_MULTIPLIER: Final = re.compile(r"_(\d+)x$")
 
 
 @dataclass(frozen=True)
@@ -130,6 +135,20 @@ def credential_to_blob(c: Credential, base: Mapping[str, object] | None = None) 
     blob: dict[str, object] = dict(base) if base is not None else {}
     blob[OAUTH_MEMBER] = credential_to_disk(c)
     return json.dumps(blob)
+
+
+def plan_label(subscription_type: str | None, rate_limit_tier: str | None) -> str | None:
+    """The plan as a person reads it: "max 20x", not "max" and a tier nobody sees.
+
+    Two Max accounts on different multipliers have very different weekly budgets,
+    so the multiplier is the load-bearing half of "which plan is this account on".
+    An unrecognised tier degrades to the bare subscription type rather than
+    guessing a number.
+    """
+    if subscription_type is None:
+        return None
+    match = _TIER_MULTIPLIER.search(rate_limit_tier or "")
+    return f"{subscription_type} {match.group(1)}x" if match else subscription_type
 
 
 def is_expired(c: Credential, *, now_ms: int, buffer_ms: int = EXPIRY_BUFFER_MS) -> bool:
