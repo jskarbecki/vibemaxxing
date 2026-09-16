@@ -68,7 +68,7 @@ def test_list_json_envelope_is_stable(tmp_home: Path, capsys: pytest.CaptureFixt
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["schema"] == ENVELOPE_SCHEMA
-    assert set(payload) == {"schema", "generated_at", "accounts", "pool"}
+    assert set(payload) == {"schema", "generated_at", "accounts", "pool", "resets"}
     assert set(payload["pool"]) == {"accounts", "remaining_account_weeks", "dry_in_seconds"}
     assert payload["pool"]["accounts"] == 2
 
@@ -167,3 +167,16 @@ def test_run_pins_the_token_to_the_child_environment_only(tmp_home: Path) -> Non
     assert exit_code == 0, "the child did not see the alias's access token"
     assert ctx.port.blob == before, "run must not touch the global credential"
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in os.environ, "the parent env must stay clean"
+
+
+def test_help_names_every_command_and_exits_clean(
+    tmp_home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`vibe help` is what people type. Before it existed argparse answered
+    "invalid choice: 'help'" and listed the commands it had just refused to
+    explain."""
+    assert cli.main(["help"], context=context(tmp_home, FakeHttpClient())) == 0
+    printed = capsys.readouterr().out
+    for command in ("add", "list", "switch", "run", "remove", "alias", "usage"):
+        assert f"vibe {command}" in printed, command
+    assert "--json" in printed

@@ -22,11 +22,14 @@ from tests.fakes import (
     FakeHttpClient,
     FakeKeychain,
     fixture_usage,
+    make_credential,
     seed_account,
 )
-from vibemaxxing import cli, envelope, web
+from vibemaxxing import cli, envelope, store, usage, web
 from vibemaxxing.envelope import ENVELOPE_SCHEMA
 from vibemaxxing.errors import VibeError
+from vibemaxxing.httpclient import HTTPError
+from vibemaxxing.models import AccountState
 from vibemaxxing.redact import REDACTED, Secret
 
 NOW_S = 1_757_930_000.0
@@ -198,11 +201,36 @@ def test_the_page_keeps_the_ported_design_properties() -> None:
     assert len(re.findall(r"#[0-9a-fA-F]{3,8}\b", page)) == 10
     assert "font-variant-numeric: tabular-nums" in page
     assert "prefers-color-scheme: dark" in page
+    # Every other colour on the page is mixed from those ten, so the palette has
+    # five decisions in it and both schemes stay in step by construction.
+    assert page.count("color-mix(in oklab") >= 5
+    # An em dash is not a number. The unknown-percent cell reads as a ledger nil.
+    assert "\u2014" not in page
     # One motion in the whole page, plus its opt-out. Nothing else animates.
     assert page.count("transition:") == 2
     assert page.count("transition: width 240ms cubic-bezier(0.23, 1, 0.32, 1)") == 1
     assert page.count("transition: none") == 1
     assert "prefers-reduced-motion" in page
+
+
+def test_the_page_is_a_ledger_beside_a_week() -> None:
+    """The split is the design: accounts on the left, the week on the right, one
+    column under 1080px. The timeline is inline SVG with no library, because the
+    page is package data served over loopback with no network."""
+    page = web.page()
+
+    assert "grid-template-columns: minmax(0, 1fr) 1px 372px" in page
+    assert "@media (max-width: 1080px)" in page
+    assert "position: sticky" in page
+    # No CDN, no bundle, no chart library: every byte the browser runs is here.
+    assert "<script src" not in page
+    assert "http://www.w3.org/2000/svg" in page
+    for absent in ("cdn.", "unpkg", "jsdelivr", "//fonts."):
+        assert absent not in page, absent
+    # Every rendered time goes through toLocale*, which reads the machine's own
+    # zone, and the page names that zone so the reader can see which one it used.
+    assert "resolvedOptions().timeZone" in page
+    assert "toLocaleDateString" in page and "toLocaleTimeString" in page
 
 
 # --- the entry point the CLI calls -------------------------------------------
@@ -223,3 +251,46 @@ def test_snapshot_is_the_section_10_envelope(tmp_home: Path) -> None:
     assert set(accounts[0]) == ENVELOPE_ACCOUNT_KEYS
     assert accounts[0]["alias"] == "work"
     assert accounts[0]["active"] is True
+
+
+def test_a_plan_less_account_backfills_its_plan_once(tmp_home: Path) -> None:
+    """An account added by our own login has no subscriptionType, so the first
+    fetch asks the profile endpoint and writes the answer to the account file."""
+    root = tmp_home / ".vibemaxxing"
+    seed_account(root, "work", credential=make_credential(subscription_type=None))
+    client = FakeHttpClient()
+    client.queue_json(
+        200,
+        {
+            "organization": {
+                "organization_type": "claude_max",
+                "rate_limit_tier": "default_claude_max_20x",
+            }
+        },
+    )
+    client.queue_json(200, fixture_usage())
+
+    views = envelope.collect(root, client=client, now_s=NOW_S)
+
+    assert [view.plan for view in views] == ["max 20x"]
+    stored = store.read_account(root, "work").credential
+    assert (stored.subscription_type, stored.rate_limit_tier) == ("max", "default_claude_max_20x")
+
+    # Second pass: the plan is on disk now, so only the usage request goes out.
+    client.queue_json(200, fixture_usage())
+    assert [view.plan for view in envelope.collect(root, client=client, now_s=NOW_S)] == ["max 20x"]
+    assert [request.url for request in client.requests].count(usage.PROFILE_URL) == 1
+
+
+def test_a_failing_profile_endpoint_costs_only_the_plan(tmp_home: Path) -> None:
+    root = tmp_home / ".vibemaxxing"
+    seed_account(root, "work", credential=make_credential(subscription_type=None))
+    client = FakeHttpClient()
+    client.queue(HTTPError(500, b"boom"))
+    client.queue_json(200, fixture_usage())
+
+    views = envelope.collect(root, client=client, now_s=NOW_S)
+
+    assert views[0].plan is None
+    assert views[0].state is AccountState.OK
+    assert views[0].summary is not None

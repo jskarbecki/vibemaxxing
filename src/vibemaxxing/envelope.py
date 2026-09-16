@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final
@@ -19,7 +19,7 @@ from vibemaxxing.credentials import EMPTY_IDENTITY, Credential, Identity
 from vibemaxxing.errors import VibeError
 from vibemaxxing.httpclient import HttpClient, HTTPError
 from vibemaxxing.models import AccountState
-from vibemaxxing.pool import AccountUsage, pool_remaining
+from vibemaxxing.pool import WEEKLY_ALL_KIND, AccountUsage, pool_remaining
 from vibemaxxing.redact import scrub
 from vibemaxxing.usage import Summary
 
@@ -61,6 +61,46 @@ def _claude_identity(stored: Identity) -> Identity:
     return stored
 
 
+def _fill_plan(root: Path, alias: str, credential: Credential, client: HttpClient) -> str | None:
+    """The plan label, fetching and storing it once for an account that has none.
+
+    An account imported from Claude Code arrives with subscriptionType already
+    set; one added through our own login arrives without it, which is why some
+    cards showed a plan and some showed nothing. The profile endpoint knows, so
+    the first fetch after a login backfills the credential and every later poll
+    reads it off disk — no extra request per poll, and no plan-less card.
+    """
+    if credential.subscription_type is not None:
+        return credentials.plan_label(credential.subscription_type, credential.rate_limit_tier)
+    try:
+        subscription, tier = usage.fetch_plan(client, credential.access_token)
+    except (VibeError, HTTPError):
+        # Decoration. A profile endpoint having a bad day must not cost the
+        # account its usage rows.
+        return None
+    if subscription is None:
+        return None
+    try:
+        # Re-read rather than reuse the account this view opened with: a refresh
+        # may have rotated the token since, and writing the stale one back would
+        # hand the next run a token the server has already killed.
+        # ponytail: no lock, so a refresh landing inside this window loses its
+        # plan backfill and refetches on the next poll. Cheap, and never a token.
+        stored = store.read_account(root, alias)
+        store.write_account(
+            root,
+            replace(
+                stored,
+                credential=replace(
+                    stored.credential, subscription_type=subscription, rate_limit_tier=tier
+                ),
+            ),
+        )
+    except (VibeError, OSError):
+        pass
+    return credentials.plan_label(subscription, tier)
+
+
 def _needs_login(alias: str) -> str:
     return f'the login for "{alias}" has lapsed — run: vibe add {alias}'
 
@@ -97,7 +137,9 @@ def _view(
         )
 
     identity = _claude_identity(account.identity) if active else account.identity
-    plan = account.credential.subscription_type
+    plan = credentials.plan_label(
+        account.credential.subscription_type, account.credential.rate_limit_tier
+    )
 
     try:
         # Inside the guard: read_stash on an unreadable or unknown-schema stash
@@ -115,6 +157,8 @@ def _view(
 
     if not fetch:
         return AccountView(alias, active, AccountState.OK, None, identity, plan, None, None)
+
+    plan = _fill_plan(root, alias, credential, client) or plan
 
     try:
         payload = usage.fetch_usage(client, credential.access_token)
@@ -190,6 +234,37 @@ def pool_weeks(views: Sequence[AccountView]) -> float:
     )
 
 
+def _epoch(stamp: str) -> float | None:
+    try:
+        return datetime.fromisoformat(stamp).timestamp()
+    except ValueError:
+        # An unparseable stamp drops that one reset off the list. The server owns
+        # this string's format, and guessing at a new one would place a marker at
+        # an invented moment rather than omit it.
+        return None
+
+
+def resets(views: Sequence[AccountView]) -> list[dict[str, object]]:
+    """Each account's weekly rollover, soonest first.
+
+    The ``weekly_all`` row only. The session row rolls over every few hours and
+    would bury the weekly ones it overlaps, and ``weekly_scoped`` rolls over
+    within a minute of ``weekly_all`` on the same account.
+    """
+    found: list[tuple[float, dict[str, object]]] = []
+    for view in views:
+        if view.state is not AccountState.OK or view.summary is None:
+            continue
+        for row in view.summary.rows:
+            if row.kind != WEEKLY_ALL_KIND:
+                continue
+            at_s = _epoch(row.resets_at) if row.resets_at else None
+            if at_s is not None:
+                found.append((at_s, {"alias": view.alias, "at": _iso(at_s)}))
+            break
+    return [entry for _, entry in sorted(found, key=lambda pair: pair[0])]
+
+
 def build(
     views: Sequence[AccountView], *, now_s: float, dry_in: timedelta | None = None
 ) -> dict[str, object]:
@@ -202,6 +277,7 @@ def build(
             "remaining_account_weeks": pool_weeks(views),
             "dry_in_seconds": None if dry_in is None else int(dry_in.total_seconds()),
         },
+        "resets": resets(views),
     }
 
 

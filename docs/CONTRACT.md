@@ -184,7 +184,7 @@ Rules, in force everywhere:
 3. `.reveal()` may be called in **exactly five places**, and nowhere else:
    - `credentials.credential_to_disk()` — writing the account/stash file
    - `credentials.credential_to_blob()` — writing the Keychain / credentials file
-   - `usage.fetch_usage()` — the `Authorization` header
+   - `usage._get()` — the `Authorization` header of both OAuth API GETs
    - `oauth.refresh()` and `oauth.exchange_code()` — the POST body
    - `cli` — the `CLAUDE_CODE_OAUTH_TOKEN` value in the child env of `vibe run`
    The Phase-F credential-leak lens greps for every other `.reveal(`.
@@ -222,6 +222,13 @@ passes it down. No test may reach the network.
 
 Allowed hosts, and no others: `claude.ai`, `platform.claude.com`, `api.anthropic.com`.
 No version pings, no analytics, no telemetry.
+
+Every request carries `User-Agent: vibemaxxing/<version>` unless the caller sets its own.
+Cloudflare fronts all three hosts and rejects urllib's default `Python-urllib/3.x` with a
+403 `error code: 1010` before the request reaches the API -- with no agent named, the token
+exchange at the end of `vibe add` fails every time. This is the one thing `httpclient`
+takes from the package: `__version__` off `vibemaxxing/__init__`, which imports no
+submodule, so the leaf stays acyclic.
 
 ### `models.py`
 
@@ -488,9 +495,19 @@ stdout pipe, never in argv.
 3. Build the incoming blob with `credential_to_blob(incoming, base=the blob from step 1)`
    so `mcpOAuth` and any future sibling survive.
 4. Write the port.
-5. Update the `active` pointer.
+5. Repoint `oauthAccount` in `~/.claude.json` at the incoming account and delete its
+   `profileFetchedAt`. Claude Code caches the logged-in profile there and skips the
+   refetch for 24h while that stamp is fresh, so a credential-only switch leaves it
+   running on the incoming token while naming the **outgoing** account — measured on
+   2.1.272. Dropping the stamp makes Claude Code refetch with the incoming token and
+   fill the members we cannot know (`billingType`, `seatTier`, the trial flags), so a
+   machine that has never run `claude` needs no priming. Every other key in the file is
+   preserved; a missing file is created, a corrupt one is left alone.
+6. Update the `active` pointer.
 
-The resync in step 2 happens **before** the overwrite in step 4. A test with an
+Step 5 happens **after** step 4: the identity file only says who the credential belongs
+to, so it must never name the incoming account while the port still holds the outgoing
+one. The resync in step 2 happens **before** the overwrite in step 4. A test with an
 in-memory fake port asserts that ordering.
 
 ---
@@ -535,7 +552,9 @@ def parse_pasted_code(paste: str, expected_state: str) -> tuple[str, str]: ...
 
 Phase A named PKCE for this module but specified no generator, so Phase D added
 `new_verifier()` (`secrets.token_urlsafe(32)`, 43 chars, inside RFC 7636's 43-128) and
-`new_state()` (`secrets.token_urlsafe(16)`).
+`new_state()` (`secrets.token_urlsafe(32)`, 43 chars). The authorize endpoint
+validates the state's length: a 22-char state renders the consent page but fails the
+Authorize click with "Invalid request format".
 
 Split on the **first** `#`. No `#` → `PasteFormatError`. State half ≠ `expected_state` →
 `StateMismatchError`. Returns `(code, state)`.
@@ -636,7 +655,7 @@ schema. AC17 pins it.
       "email": "jan@intra-ai.de",
       "display_name": "Jan",
       "organization": "Intra AI",
-      "plan": "max",
+      "plan": "max 20x",
       "updated_at": "2026-09-15T10:39:12+00:00",
       "rows": [
         {"kind": "session", "label": "Session", "percent": 0,
@@ -662,9 +681,19 @@ schema. AC17 pins it.
     "accounts": 2,
     "remaining_account_weeks": 0.44,
     "dry_in_seconds": null
-  }
+  },
+  "resets": [
+    {"alias": "work", "at": "2026-09-19T13:00:00+00:00"},
+    {"alias": "old", "at": "2026-09-22T21:00:00+00:00"}
+  ]
 }
 ```
+
+`resets` is every account's **weekly rollover**, soonest first, and `[]` when no account
+reports one. The `weekly_all` row only: the session row rolls over every few hours and
+would bury the weekly ones it overlaps, and `weekly_scoped` rolls over within a minute of
+`weekly_all` on the same account. An account that is not `ok`, or whose `resets_at` does
+not parse, contributes no entry rather than one at a guessed moment.
 
 **Every documented key is present on every entry**, whatever the state — absent data is
 `null` or `[]`, never a missing key. The single list of those keys lives in
@@ -743,15 +772,45 @@ page left open for days from growing. Colour comes from the payload's `severity`
 from an invented percentage threshold. The row list is rendered from `rows`, never from
 a hardcoded three-row layout.
 
+Exactly **ten** hex literals, five per scheme, all of them inside `:root`. Every other
+colour on the page — hairlines, tracks, the badge border, the scrollbar — is
+`color-mix`ed from those five, so the palette has five decisions in it and both schemes
+stay in step by construction. `tests/test_web.py` counts them.
+
+The page is a **split**: the account ledger on the left, the week on the right,
+collapsing to one column under 1080px. The rail renders `resets` as inline SVG with no
+library and no build step — the page is package data served over loopback and must work
+with no network at all.
+
+The week runs from **this instant** to seven days out, one lane per account, a dot where
+that account's weekly limit rolls over. The left edge is now, so the whole thing slides
+on the same 30 s timer that repaints the relative reset times.
+
+Every rendered time goes through `toLocaleDateString` / `toLocaleTimeString`, which read
+the machine's own zone — a reader in New York reads New York time with no setting to
+find — and the rail names the zone it resolved so that is visible rather than assumed.
+Day boundaries are **local midnights**, walked with `setDate`, not fixed 24 h steps from
+now: a fixed step drifts a day's worth of gridline across a DST change. A weekday name
+is centred over the day it names, not over the midnight that starts it, and is dropped
+when its column is under 20px — which is the part-day at each end, and the left one is
+already called "now".
+
+Every limit row is drawn the same: one bar height, one weight, one colour rule. Colour
+comes from the payload's `severity` and nothing else. Which row matters is the reader's
+call, not something typography decides for them.
+
 ---
 
 ## 12. Usage and pool — `usage.py`, `pool.py` (C2)
 
 ```python
 USAGE_URL: Final = "https://api.anthropic.com/api/oauth/usage"
+PROFILE_URL: Final = "https://api.anthropic.com/api/oauth/profile"
 BETA_HEADER: Final = "oauth-2025-04-20"
 
 def fetch_usage(client: HttpClient, token: Secret, *, timeout_s: float = 10.0) -> dict[str, object]: ...
+def fetch_plan(client: HttpClient, token: Secret,
+               *, timeout_s: float = 10.0) -> tuple[str | None, str | None]: ...
 
 @dataclass(frozen=True)
 class Row:
@@ -784,6 +843,24 @@ and the web page behave identically on a bad day; before Phase E it escaped `col
 `fetch_usage` sends `Authorization: Bearer <token>` and `anthropic-beta: oauth-2025-04-20`,
 and nothing else. Measured 2026-09-15: those two headers alone return
 `HTTP/1.1 200 OK` with `Content-Type: application/json`, so no `Accept` header is added.
+
+`fetch_plan` reads `organization.organization_type` and `organization.rate_limit_tier`
+off the profile endpoint and drops the `claude_` prefix, so the stored value is the one
+Claude Code writes (`max`, `pro`) and a switch ports a blob in Claude Code's own
+vocabulary. It exists because the plan is in neither of the two places a poll already
+looks: the usage response names no plan (measured 2026-09-16: 22 top-level keys, none of
+them a plan), and the token endpoint answers a `vibe add` login without one, so an
+account we logged in ourselves showed no plan at all while an imported one showed
+`max`. `envelope._fill_plan` therefore fetches it **once**, on the first poll of an
+account whose credential has no `subscriptionType`, and writes it back to the account
+file; every later poll reads it off disk. A failing profile endpoint costs the plan
+label and nothing else — the account keeps its usage rows and its `ok` state.
+
+The envelope's `plan` is that label, not the raw field: `subscriptionType` plus the
+multiplier parsed off the tier (`default_claude_max_20x` → `max 20x`), because two Max
+accounts on different multipliers have very different weekly budgets and the raw `max`
+answers "which plan" only halfway. An unrecognised tier renders the bare subscription
+type rather than a guessed number.
 
 `summarize` renders from the **`limits` array**, never from the sibling `five_hour` /
 `seven_day` objects. `kind` values are open-ended. Labels:

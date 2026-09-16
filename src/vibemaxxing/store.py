@@ -25,6 +25,7 @@ from vibemaxxing.credentials import (
     parse_blob_members,
     parse_credential,
     read_claude_identity,
+    write_claude_identity,
 )
 from vibemaxxing.errors import NotFoundError, StoreError, UsageError
 from vibemaxxing.fsutil import private_dir, write_private
@@ -354,4 +355,8 @@ def switch(root: Path, alias: str, port: KeychainPort) -> None:
     # credential the resync just wrote, not the copy read before it.
     incoming = read_account(root, alias)
     port.write(credential_to_blob(incoming.credential, base))
+    # After the port, never before: the identity file only describes who the
+    # credential belongs to, so it must not name the incoming account while the
+    # port still holds the outgoing one.
+    write_claude_identity(Path.home() / ".claude.json", incoming.identity)
     write_active(root, alias)

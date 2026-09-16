@@ -21,6 +21,7 @@ from vibemaxxing.oauth import (
     build_authorize_url,
     classify_refresh_error,
     exchange_code,
+    new_state,
     parse_pasted_code,
     refresh,
 )
@@ -99,6 +100,13 @@ def test_authorize_url_matches_observed_login_flow() -> None:
         "code_challenge_method": "S256",
         "state": "teststate",
     }
+
+
+def test_state_is_long_enough_for_the_authorize_endpoint() -> None:
+    # Observed 2026-09-15: a 22-char state (token_urlsafe(16)) renders the consent
+    # page and then fails the Authorize click with "Invalid request format".
+    # 43 chars is what Claude Code sends and what the endpoint accepts.
+    assert len(new_state()) == 43
 
 
 def test_pasted_code_splits_and_checks_state() -> None:

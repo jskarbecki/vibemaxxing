@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest something it should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `docs/CONTRACT.md` is the frozen design and explains why several obvious-looking
+        things are deliberately absent. Worth a skim before you write.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem you hit
+      description: What you were trying to do when you wanted this.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you would like it to do
+    validations:
+      required: true

@@ -14,6 +14,7 @@ from vibemaxxing.credentials import (
     login_lapsed,
     parse_blob,
     parse_credential,
+    plan_label,
     read_claude_identity,
 )
 from vibemaxxing.errors import StoreError
@@ -117,3 +118,12 @@ def test_identity_comes_from_claude_json_and_is_empty_when_absent(tmp_home: Path
     broken = tmp_home / "broken.json"
     broken.write_text("{not json")
     assert read_claude_identity(broken) == EMPTY_IDENTITY
+
+
+def test_plan_label_carries_the_multiplier_that_sets_the_budget() -> None:
+    assert plan_label("max", "default_claude_max_20x") == "max 20x"
+    assert plan_label("max", "default_claude_max_5x") == "max 5x"
+    # No multiplier to read: the bare plan, never an invented number.
+    assert plan_label("pro", "default") == "pro"
+    assert plan_label("max", None) == "max"
+    assert plan_label(None, "default_claude_max_20x") is None

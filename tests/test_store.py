@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import os
 import stat
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from tests.fakes import FakeKeychain
 from vibemaxxing import store
-from vibemaxxing.credentials import EMPTY_IDENTITY, Credential
+from vibemaxxing.credentials import EMPTY_IDENTITY, Credential, Identity
 from vibemaxxing.errors import NotFoundError, StoreError, UsageError
 from vibemaxxing.models import AccountState
 from vibemaxxing.redact import Secret
@@ -135,6 +136,73 @@ def test_switch_resyncs_outgoing_then_writes_incoming(
 
     assert read_account(root, "a").credential.access_token.reveal() == "a-rotated-behind-our-back"
     assert read_active(root) == "b"
+
+
+def test_switch_repoints_the_profile_claude_code_caches(tmp_home: Path) -> None:
+    """Claude Code skips the profile refetch for 24h while `profileFetchedAt` is
+    fresh, so a credential-only switch leaves it naming the outgoing account."""
+    root = store_root()
+    incoming = replace(
+        make_account("b"),
+        identity=Identity(
+            email="b@example.com",
+            account_uuid="uuid-b",
+            organization_name="Org B",
+            organization_uuid="org-uuid-b",
+            seat_tier=None,
+            billing_type=None,
+            display_name="B",
+        ),
+    )
+    write_account(root, incoming)
+
+    config = tmp_home / ".claude.json"
+    config.write_text(
+        json.dumps(
+            {
+                "numStartups": 1806,
+                "oauthAccount": {
+                    "emailAddress": "a@example.com",
+                    "accountUuid": "uuid-a",
+                    "organizationUuid": "org-uuid-a",
+                    "billingType": "subscription",
+                    "profileFetchedAt": 1757930000000,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    switch(root, "b", FakeKeychain(blob='{"claudeAiOauth": {}}'))
+
+    written = json.loads(config.read_text(encoding="utf-8"))
+    account = written["oauthAccount"]
+    assert account["emailAddress"] == "b@example.com"
+    assert account["accountUuid"] == "uuid-b"
+    assert account["organizationUuid"] == "org-uuid-b"
+    # Gone, so Claude Code refetches the rest with the incoming token instead of
+    # trusting members that still describe the outgoing account.
+    assert "profileFetchedAt" not in account
+    assert written["numStartups"] == 1806, "the rest of Claude Code's config must survive"
+    assert stat.S_IMODE(os.stat(config).st_mode) == 0o600
+
+
+def test_switch_writes_a_profile_on_a_machine_that_has_none(tmp_home: Path) -> None:
+    """A fresh install has no ~/.claude.json until Claude Code runs. `vibe add`
+    then `vibe switch` must still land a usable profile with no priming."""
+    root = store_root()
+    write_account(
+        root,
+        replace(
+            make_account("solo"),
+            identity=replace(EMPTY_IDENTITY, email="solo@example.com", account_uuid="uuid-solo"),
+        ),
+    )
+
+    switch(root, "solo", FakeKeychain(blob=None))
+
+    written = json.loads((tmp_home / ".claude.json").read_text(encoding="utf-8"))
+    assert written["oauthAccount"]["emailAddress"] == "solo@example.com"
 
 
 def test_switch_refuses_an_unknown_alias_before_touching_the_port(tmp_home: Path) -> None:

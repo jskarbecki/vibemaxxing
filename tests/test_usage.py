@@ -9,7 +9,14 @@ from tests.fakes import FakeHttpClient
 from vibemaxxing.errors import NetworkError
 from vibemaxxing.httpclient import HttpResponse
 from vibemaxxing.redact import Secret
-from vibemaxxing.usage import BETA_HEADER, USAGE_URL, fetch_usage, summarize
+from vibemaxxing.usage import (
+    BETA_HEADER,
+    PROFILE_URL,
+    USAGE_URL,
+    fetch_plan,
+    fetch_usage,
+    summarize,
+)
 
 FIXTURE = Path(__file__).parent / "fixture_usage.json"
 SENTINEL_TOKEN = "sk-ant-oat01-VMXUSAGESENTINEL0000000000000000"
@@ -133,3 +140,34 @@ def test_fetch_usage_rejects_a_body_that_is_not_json() -> None:
 
     with pytest.raises(NetworkError):
         fetch_usage(client, Secret(SENTINEL_TOKEN))
+
+
+# The live profile response, trimmed to the two members that answer "which plan".
+PROFILE_PAYLOAD = {
+    "account": {"email": "jan@intra-ai.de", "has_claude_max": True},
+    "organization": {
+        "organization_type": "claude_max",
+        "rate_limit_tier": "default_claude_max_20x",
+        "seat_tier": None,
+    },
+    "application": {"slug": "claude-code"},
+}
+
+
+def test_fetch_plan_reads_the_organization_type_and_tier() -> None:
+    client = FakeHttpClient()
+    client.queue_json(200, PROFILE_PAYLOAD)
+
+    assert fetch_plan(client, Secret(SENTINEL_TOKEN)) == ("max", "default_claude_max_20x")
+
+    request = client.requests[0]
+    assert request.url == PROFILE_URL
+    assert request.headers["Authorization"] == f"Bearer {SENTINEL_TOKEN}"
+    assert SENTINEL_TOKEN not in request.url
+
+
+def test_fetch_plan_tolerates_a_profile_without_an_organization() -> None:
+    client = FakeHttpClient()
+    client.queue_json(200, {"account": {"email": "jan@intra-ai.de"}})
+
+    assert fetch_plan(client, Secret(SENTINEL_TOKEN)) == (None, None)
