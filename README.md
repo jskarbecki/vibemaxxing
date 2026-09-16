@@ -11,7 +11,7 @@ how much weekly headroom you have left across all of them.
 vibe switch work
 ```
 
-![The dashboard: every account's limits on the left, the week ahead on the right](docs/media/dashboard.png)
+![The dashboard: every account's limits on the left, the week ahead on the right](https://raw.githubusercontent.com/jskarbecki/vibemaxxing/main/docs/media/dashboard.png)
 
 ## Install
 
