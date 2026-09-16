@@ -32,24 +32,12 @@ Status as of 2026-09-16: `main` is green, the wheel builds and installs clean, t
 
 ## 2. Should do before anyone sees it
 
-- [ ] **Decide what to do about the address in the history.** The working tree is clean:
-      `docs/RUNBOOK.md` was a transcript of a real session and carried
-      `you@example.com` on eight lines; it now reads `you@example.com`, and local
-      paths read `/Users/you`. But the original text is still in commit `e78bf7d`, and
-      going public publishes that commit. Three options:
+- [x] **The history was rewritten.** An earlier `docs/RUNBOOK.md` was a transcript of a
+      real session and carried a personal gmail address and a real home directory path
+      across several commits. `git filter-repo` replaced both throughout the history on
+      2026-09-16 and the result was force-pushed. `jan@intra-ai.de` is deliberately kept:
+      it is the maintainer contact in `pyproject.toml` and `SECURITY.md`.
 
-      1. **Accept it.** It is one gmail address you own, in a docs file, not a secret.
-         Cheapest, and most projects would not notice.
-      2. **Rewrite the history** before going public, while nobody has cloned it:
-         `git filter-repo --replace-text` over the two strings, then a force-push. Clean
-         result, rewrites every SHA. I have not done this: it needs a force-push, which
-         I do not do without you saying so explicitly.
-      3. **Squash the pre-release history** into one initial commit. Loses the build
-         story, which is genuinely interesting in this repo's case.
-
-      `gitleaks` runs over the whole history in CI and is clean — but it looks for
-      secrets, not for your own name. The author email on every commit is already the
-      GitHub noreply address.
 - [ ] **Confirm the screenshot is the demo one.** `docs/media/dashboard.png` must show
       `you@example.com` / `side@example.com` / `team@example.com`, never your accounts.
       Regenerate any time with `uv run python scripts/demo_dashboard.py`.
