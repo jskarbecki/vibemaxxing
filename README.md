@@ -141,6 +141,13 @@ access token needs a re-run. Every grandchild inherits the variable.
 **Switching does not reach a running session.** `vibe switch` makes no attempt to signal
 a live Claude Code process. Restart it, or use `vibe run`.
 
+**Usage numbers can be a few minutes old.** Anthropic's usage endpoint allows roughly 30
+requests per account per hour, shared by everything that asks. Every `vibe` process
+reuses one answer per account for about 3 minutes. An account that gets rate limited waits
+1 to 8 minutes before its next try, longer if the server asks but never more than an hour,
+and shows its last numbers and the time they are from in the meantime. Numbers more than
+an hour old are not shown at all.
+
 **Windows is unsupported.** It says so rather than half-working.
 
 ## Uninstall

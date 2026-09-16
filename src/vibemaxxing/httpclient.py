@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,10 +26,22 @@ USER_AGENT: Final = f"vibemaxxing/{__version__}"
 class HTTPError(Exception):
     """A 4xx/5xx from an allowed host. ``str`` never includes the body."""
 
-    def __init__(self, status: int, body: bytes) -> None:
+    def __init__(self, status: int, body: bytes, retry_after_s: float | None = None) -> None:
         super().__init__(f"HTTP {status}")
         self.status = status
         self.body = body
+        self.retry_after_s = retry_after_s
+
+
+def _retry_after_s(raw: str | None) -> float | None:
+    # ponytail: delta-seconds only. RFC 9110 also allows an HTTP-date, which the
+    # usage endpoint has not been observed to send; parse it when one shows up.
+    try:
+        seconds = float(raw) if raw is not None else None
+    except ValueError:
+        return None
+    # float() takes "inf" and "nan"; neither is a wait anyone can schedule.
+    return seconds if seconds is not None and math.isfinite(seconds) and seconds >= 0 else None
 
 
 @dataclass(frozen=True)
@@ -116,7 +129,9 @@ class UrllibClient:
         except urllib.error.HTTPError as exc:
             # `from None`: the suppressed context holds the request object, whose
             # headers carry the bearer token.
-            raise HTTPError(int(exc.code), exc.read()) from None
+            raise HTTPError(
+                int(exc.code), exc.read(), _retry_after_s(exc.headers.get("Retry-After"))
+            ) from None
         except OSError as exc:
             raise NetworkError(
                 f"could not reach {host}: {exc.__class__.__name__}",

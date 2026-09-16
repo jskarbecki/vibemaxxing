@@ -30,6 +30,7 @@ from vibemaxxing.envelope import ENVELOPE_SCHEMA
 from vibemaxxing.errors import VibeError
 from vibemaxxing.httpclient import HTTPError
 from vibemaxxing.models import AccountState
+from vibemaxxing.poll import USAGE_FRESH_S
 from vibemaxxing.redact import REDACTED, Secret
 
 NOW_S = 1_757_930_000.0
@@ -276,10 +277,13 @@ def test_a_plan_less_account_backfills_its_plan_once(tmp_home: Path) -> None:
     stored = store.read_account(root, "work").credential
     assert (stored.subscription_type, stored.rate_limit_tier) == ("max", "default_claude_max_20x")
 
-    # Second pass: the plan is on disk now, so only the usage request goes out.
+    # Second pass, once the cached answer has aged out: the plan is on disk now,
+    # so only the usage request goes out.
     client.queue_json(200, fixture_usage())
-    assert [view.plan for view in envelope.collect(root, client=client, now_s=NOW_S)] == ["max 20x"]
+    later = NOW_S + USAGE_FRESH_S
+    assert [view.plan for view in envelope.collect(root, client=client, now_s=later)] == ["max 20x"]
     assert [request.url for request in client.requests].count(usage.PROFILE_URL) == 1
+    assert client.responses == []
 
 
 def test_a_failing_profile_endpoint_costs_only_the_plan(tmp_home: Path) -> None:
@@ -294,3 +298,36 @@ def test_a_failing_profile_endpoint_costs_only_the_plan(tmp_home: Path) -> None:
     assert views[0].plan is None
     assert views[0].state is AccountState.OK
     assert views[0].summary is not None
+
+
+def test_two_simultaneous_tabs_cost_one_fetch() -> None:
+    # Two tabs whose 60 s timers have drifted together hit /api/usage on two
+    # threads at once. Both miss the TTL, and before the lock covered the fetch
+    # both went on to make it: 2x5 requests per cycle against a ~30/hour budget,
+    # which is the 429 the dashboard used to draw on itself.
+    cache = web._Cache(ttl_s=180.0)
+    entered = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def produce() -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        entered.set()
+        release.wait(timeout=10)
+        return {"schema": ENVELOPE_SCHEMA}
+
+    first = threading.Thread(target=lambda: cache.get(1000.0, produce))
+    first.start()
+    assert entered.wait(timeout=10)
+
+    second = threading.Thread(target=lambda: cache.get(1000.0, produce))
+    second.start()
+    # The second tab must be queued behind the fetch, not inside it. Long enough
+    # that a cache without the guard has entered produce and bumped the count.
+    second.join(timeout=0.25)
+
+    release.set()
+    first.join(timeout=10)
+    second.join(timeout=10)
+    assert calls == 1

@@ -9,6 +9,7 @@ unrecognised one is labelled generically rather than rejected.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
@@ -92,7 +93,9 @@ def _percent(value: object) -> int | None:
     # bool is an int; a JSON `true` here is a shape error, not 1 %.
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return round(value)
+    # json.loads reads 1e400 as inf, and round(inf) raises: one bad number in one
+    # account's answer must not fail every account's view.
+    return round(value) if math.isfinite(value) else None
 
 
 def _scoped_name(entry: Mapping[str, object]) -> str | None:

@@ -315,8 +315,9 @@
     var limits = el('div', 'limits');
     var refs = { rows: [], split: null };
 
-    // message is null while the account is ok, and carries the recovery command
-    // ("run: vibe add work") when it is not.
+    // message carries the recovery command ("run: vibe add work") when the account
+    // is not ok, and on an ok account says why its numbers are older than this page
+    // ("rate limited - next try 23:10 - showing usage from 23:02").
     if (account.message) {
       limits.appendChild(el('div', 'state', account.message));
     } else if (!account.rows.length) {

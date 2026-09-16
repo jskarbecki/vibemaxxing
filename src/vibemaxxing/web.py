@@ -114,9 +114,15 @@ class _Cache:
     Every browser polls /api/usage on its own timer and ThreadingHTTPServer
     answers each on its own thread, so without this the request rate is the
     number of open tabs times the page's poll rate -- the web dashboard had no
-    floor at all. The lock is never held across the fetch: a second request
-    during an in-flight one is served the previous envelope rather than queued
-    behind it.
+    floor at all.
+
+    The lock is held across the fetch, which is what makes the docstring above
+    true. Releasing it first let two tabs whose timers had drifted together both
+    miss and both fetch: measured in history.db as sample pairs 10 ms apart from
+    19:49 onward, which is 2x5 requests per cycle against a ~30/hour budget and
+    the 429 that follows. A queued tab waits for the in-flight fetch and then
+    re-checks freshness, so it is served that fetch's envelope instead of
+    starting its own.
     """
 
     def __init__(self, ttl_s: float = DASHBOARD_INTERVAL_S) -> None:
@@ -127,13 +133,11 @@ class _Cache:
 
     def get(self, now_s: float, produce: Callable[[], dict[str, object]]) -> dict[str, object]:
         with self._lock:
-            fresh = self._envelope is not None and now_s - self._at_s < self._ttl_s
-            if fresh and self._envelope is not None:
+            if self._envelope is not None and now_s - self._at_s < self._ttl_s:
                 return self._envelope
-        built = produce()
-        with self._lock:
+            built = produce()
             self._envelope, self._at_s = built, now_s
-        return built
+            return built
 
 
 def snapshot(ctx: Context, recorder: Recorder | None = None) -> dict[str, object]:

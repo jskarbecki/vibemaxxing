@@ -256,6 +256,7 @@ Root is `Path.home() / ".vibemaxxing"`. No environment override: tests set `HOME
   accounts/<alias>.json         0600   the account, including its credential
   stash/<alias>.json            0600   a successor not yet in its account file
   locks/<alias>.claim           0600   refresh in-flight claim, with a lease
+  usage/<alias>.json            0600   last usage answer and backoff, shared by every process
   active                        0600   one line: the alias whose credential is live
   history.db                    0600   the sample series
 ```
@@ -316,6 +317,21 @@ naming the file and the recovery command — it is never silently migrated.
 ```json
 {"until_ms": 1757930030000}
 ```
+
+### `usage/<alias>.json`
+
+```json
+{"schema": 1, "added_at": 1757930000.0, "fetched_at": 1757930000.0, "payload": { … },
+ "retry_at": null, "failures": 0, "message": null}
+```
+
+A cache, not a record. `payload` is the usage endpoint's response exactly as received and
+holds no token. `fetched_at` and `payload` are both present or both `null`. A missing,
+unreadable or unknown-schema file reads as no cache and is overwritten on the next fetch,
+never raised. `added_at` is the owning account's: a file whose `added_at` differs from
+`accounts/<alias>.json` belongs to an earlier login under the same alias (`vibe add` over
+it, or a fetch that landed after `vibe remove`) and is ignored. `vibe remove` deletes the
+file, `vibe alias` moves it with the account. §14 says how it is used.
 
 ### Public signatures
 
@@ -689,6 +705,14 @@ schema. AC17 pins it.
 }
 ```
 
+`updated_at` is when that account's numbers were fetched, which can be earlier than
+`generated_at`: §14's shared cache serves an answer up to `USAGE_FRESH_S` old without a
+request. After a 429, a 5xx or a network failure, an account whose last answer is under
+`USAGE_WAIT_CAP_S` (1 h) old keeps it, with `state` `ok` and a `message` that names the
+problem and the time of the numbers shown (`rate limited - next try 23:10 - showing usage
+from 23:02`). With no such answer it is `state` `error` with the message minus that last
+clause. A 401, 403 or other 4xx is `state` `error` with no numbers, as it always was.
+
 `resets` is every account's **weekly rollover**, soonest first, and `[]` when no account
 reports one. The `weekly_all` row only: the session row rolls over every few hours and
 would bury the weekly ones it overlaps, and `weekly_scoped` rolls over within a minute of
@@ -1005,11 +1029,29 @@ An account that errors retries at `60, 120, 240, 480` seconds, then holds at `48
 Backoff retries do **not** count toward the window cap. A success resets the backoff.
 An exhausted account (limits at 100 %) polls at its reset time, not on the cycle.
 
-> Note for the record, not a change: `claude-swap` measured the usage endpoint's budget
-> at ~28–30 requests per identity per rolling hour. A 60 s floor per account is 60/hour
-> and can therefore draw 429s under sustained polling. The 60 s floor is a frozen
-> product decision and AC16 tests it; this note exists so the number is not mistaken for
-> an oversight.
+**What governs live requests (0.2.1).** `claude-swap` measured the usage endpoint's
+budget at ~28–30 requests per identity per rolling hour, and the budget is per identity,
+not per process. The `Scheduler` above is still not driven by any surface. Live requests
+are governed instead by the shared cache in `usage/<alias>.json`, consulted per account
+inside `envelope.collect`, so the CLI, the TUI and the web dashboard all obey it:
+
+- An answer younger than `USAGE_FRESH_S` (`DASHBOARD_INTERVAL_S - MIN_GAP_S`, 170 s) is
+  served without a request, whichever process fetched it. One account costs at most one
+  request per ~3 min however many dashboards and `vibe list` runs are going; two
+  processes whose caches expire in the same instant can each spend one.
+- A 429 or 5xx sets `retry_at` on the `BACKOFF_S` ladder above (60/120/240/480 s, then
+  holds at 480), or at `Retry-After` when the server names a longer wait, never more than
+  `USAGE_WAIT_CAP_S` (3600 s) ahead. Until then no request goes out for that account. The
+  ladder lives on disk, so a restart does not reset it, and a `retry_at` further ahead than
+  the cap is not obeyed. A success clears it.
+- A 401, 403 or other 4xx sets no backoff and shows no numbers: the token was refused, and
+  freezing the last answer as `ok` would hide that.
+- A network failure or a body that is not JSON sets no backoff; the next attempt still
+  waits for `USAGE_FRESH_S` to run out like any other.
+- A cached answer is neither fresh nor shown when its `fetched_at` is in the future (the
+  clock stepped back) or more than `USAGE_WAIT_CAP_S` old.
+- The profile request that fills in a missing plan goes out only on a cycle that is
+  already fetching usage.
 
 ---
 

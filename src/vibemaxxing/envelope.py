@@ -19,6 +19,7 @@ from vibemaxxing.credentials import EMPTY_IDENTITY, Credential, Identity
 from vibemaxxing.errors import VibeError
 from vibemaxxing.httpclient import HttpClient, HTTPError
 from vibemaxxing.models import AccountState
+from vibemaxxing.poll import BACKOFF_S, USAGE_FRESH_S, USAGE_WAIT_CAP_S
 from vibemaxxing.pool import WEEKLY_ALL_KIND, AccountUsage, pool_remaining
 from vibemaxxing.redact import scrub
 from vibemaxxing.usage import Summary
@@ -125,6 +126,138 @@ def _usable_credential(
     return None, f"could not refresh the token ({outcome.error}) — run: vibe list"
 
 
+def _hhmm(at_s: float) -> str:
+    # Local time: every surface that shows this runs on the same machine as the
+    # process that wrote it, and an absolute time never goes stale on screen.
+    return datetime.fromtimestamp(at_s).strftime("%H:%M")
+
+
+def _transient(status: int) -> bool:
+    # A 429 or a 5xx says "not now"; the account's last numbers are still its
+    # numbers. A 401 or 403 says the token is refused, and freezing the old
+    # numbers as ok would hide that for as long as the backoff runs.
+    return status == 429 or status >= 500
+
+
+def _usage_view(
+    root: Path,
+    account: store.Account,
+    credential: Credential,
+    client: HttpClient,
+    now_s: float,
+    base: AccountView,
+) -> AccountView:
+    """Serve an account's usage from the shared cache, the endpoint, or the last answer.
+
+    Fresh cache: no request. Inside a backoff: no request, last answer shown with
+    its time. Otherwise fetch; a 429 or 5xx starts or extends the backoff (the
+    60/120/240/480 s ladder of CONTRACT section 14, or Retry-After if longer,
+    never past USAGE_WAIT_CAP_S) and, when an answer under USAGE_WAIT_CAP_S old
+    exists, still shows it rather than blanking the account.
+    """
+    alias = account.alias
+    cached = store.read_usage_cache(root, alias)
+    # Another login under the same alias -- `vibe add` over it, or a fetch that
+    # landed after `vibe remove` -- has another added_at. Its numbers are not ours.
+    if cached is not None and cached.added_at != account.added_at:
+        cached = None
+    kept_at = cached.fetched_at if cached is not None else None
+    kept = cached.payload if cached is not None else None
+    # Negative when the clock has stepped back past the fetch: that answer's age is
+    # unknown, so it is neither fresh nor shown.
+    age_s = None if kept_at is None else now_s - kept_at
+
+    def last_answer(problem: str, recovery_text: str) -> AccountView:
+        if kept is None or kept_at is None or age_s is None or not 0 <= age_s <= USAGE_WAIT_CAP_S:
+            return replace(base, state=AccountState.ERROR, message=recovery_text)
+        return replace(
+            base,
+            message=f"{problem} - showing usage from {_hhmm(kept_at)}",
+            summary=usage.summarize(kept),
+            updated_at=kept_at,
+        )
+
+    if kept is not None and age_s is not None and 0 <= age_s < USAGE_FRESH_S:
+        return replace(base, summary=usage.summarize(kept), updated_at=kept_at)
+    wait_until = cached.retry_at if cached is not None else None
+    # A retry_at past the cap was not written by this code, so it is not obeyed.
+    if (
+        cached is not None
+        and wait_until is not None
+        and now_s < wait_until <= now_s + USAGE_WAIT_CAP_S
+    ):
+        problem = cached.message or f"backing off - next try {_hhmm(wait_until)}"
+        return last_answer(problem, problem)
+
+    # Only on a poll that is about to spend a request anyway: a plan-less account
+    # would otherwise ask the profile endpoint on every cached or waiting cycle.
+    base = replace(base, plan=_fill_plan(root, alias, credential, client) or base.plan)
+
+    # ponytail: no cross-process lock, so two processes whose caches expire in the
+    # same instant both fetch once. Bounded at one extra request per process per
+    # interval; a claim file like locks/<alias>.claim if that ever shows in a 429.
+    try:
+        payload = usage.fetch_usage(client, credential.access_token)
+    except VibeError as exc:
+        # Offline, or a body that is not JSON: no backoff. The next cycle may try
+        # again, and USAGE_FRESH_S already bounds how often that is.
+        return last_answer(scrub(exc.message), exc.render())
+    except HTTPError as exc:
+        # UrllibClient raises HTTPError, which is not a VibeError, on every 4xx
+        # and 5xx. Containing it here rather than in each surface is what makes
+        # the CLI, the TUI and the web page behave the same on a bad day.
+        if not _transient(exc.status):
+            return replace(
+                base,
+                state=AccountState.ERROR,
+                message=f"the usage endpoint answered HTTP {exc.status} - run: vibe list",
+            )
+        failures = (cached.failures if cached is not None else 0) + 1
+        step_s = BACKOFF_S[min(failures, len(BACKOFF_S)) - 1]
+        retry_at = now_s + min(max(step_s, exc.retry_after_s or 0.0), USAGE_WAIT_CAP_S)
+        # No "run: vibe list": another request is what drew this, and the backoff
+        # already decides when the next one goes out.
+        what = "rate limited" if exc.status == 429 else f"usage endpoint answered HTTP {exc.status}"
+        problem = f"{what} - next try {_hhmm(retry_at)}"
+        # Re-read: another process may have landed a newer answer while this one
+        # was in flight, and writing ours back would throw it away.
+        latest = store.read_usage_cache(root, alias)
+        if (
+            latest is not None
+            and latest.added_at == account.added_at
+            and latest.fetched_at is not None
+            and (kept_at is None or latest.fetched_at > kept_at)
+        ):
+            kept_at, kept = latest.fetched_at, latest.payload
+            age_s = now_s - kept_at
+        store.write_usage_cache(
+            root,
+            alias,
+            store.UsageCache(
+                added_at=account.added_at,
+                fetched_at=kept_at,
+                payload=kept,
+                retry_at=retry_at,
+                failures=failures,
+                message=problem,
+            ),
+        )
+        return last_answer(problem, problem)
+    store.write_usage_cache(
+        root,
+        alias,
+        store.UsageCache(
+            added_at=account.added_at,
+            fetched_at=now_s,
+            payload=payload,
+            retry_at=None,
+            failures=0,
+            message=None,
+        ),
+    )
+    return replace(base, summary=usage.summarize(payload), updated_at=now_s)
+
+
 def _view(
     root: Path, alias: str, *, active: bool, client: HttpClient, now_s: float, fetch: bool
 ) -> AccountView:
@@ -158,32 +291,8 @@ def _view(
     if not fetch:
         return AccountView(alias, active, AccountState.OK, None, identity, plan, None, None)
 
-    plan = _fill_plan(root, alias, credential, client) or plan
-
-    try:
-        payload = usage.fetch_usage(client, credential.access_token)
-    except VibeError as exc:
-        return AccountView(
-            alias, active, AccountState.ERROR, exc.render(), identity, plan, None, None
-        )
-    except HTTPError as exc:
-        # UrllibClient raises HTTPError, which is not a VibeError, on every 4xx and
-        # 5xx -- including the 429 that section 14's own note predicts under a 60 s
-        # floor. Containing it here rather than in each surface is what makes the
-        # CLI, the TUI and the web page behave the same on a bad day.
-        return AccountView(
-            alias,
-            active,
-            AccountState.ERROR,
-            f"the usage endpoint answered HTTP {exc.status} - run: vibe list",
-            identity,
-            plan,
-            None,
-            None,
-        )
-    return AccountView(
-        alias, active, AccountState.OK, None, identity, plan, usage.summarize(payload), now_s
-    )
+    base = AccountView(alias, active, AccountState.OK, None, identity, plan, None, None)
+    return _usage_view(root, account, credential, client, now_s, base)
 
 
 def collect(

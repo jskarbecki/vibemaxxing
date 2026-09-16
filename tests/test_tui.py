@@ -166,11 +166,12 @@ async def test_refresh_paints_each_account_and_never_a_token(tmp_home: Path) -> 
 
         widgets = len(app.query("*"))
         _queue(client, 2)
-        ctx.now_s = NOW_S + 60.0
+        ctx.now_s = NOW_S + tui.REFRESH_S
         await app.refresh_cycle()
         await pilot.pause()
 
         assert len(app.query("*")) == widgets
+        assert client.responses == []
 
 
 async def test_a_failed_poll_reports_itself_and_keeps_the_window(tmp_home: Path) -> None:
@@ -178,8 +179,8 @@ async def test_a_failed_poll_reports_itself_and_keeps_the_window(tmp_home: Path)
     seed_account(root, "one", active=True)
     client = FakeHttpClient()
     # envelope.collect contains an HTTPError per account, so a 429 on one
-    # account lands in that account's panel with a recovery command and the
-    # other accounts and the window are untouched.
+    # account lands in that account's panel with the time of the next try and
+    # the other accounts and the window are untouched.
     client.queue(HTTPError(429, b'{"error": "rate_limited"}'))
     ctx = _context(root, client)
 
@@ -192,8 +193,7 @@ async def test_a_failed_poll_reports_itself_and_keeps_the_window(tmp_home: Path)
         await pilot.pause()
         panel = _text(app.panels["one"])
 
-        assert "429" in panel
-        assert "run: vibe list" in panel
+        assert "rate limited - next try" in panel
         assert app.is_running
 
         # And the footer's own guard still catches anything collect cannot
@@ -235,7 +235,9 @@ async def test_dashboard_refresh_has_no_unbounded_growth(tmp_home: Path) -> None
             client.requests.clear()
             client.responses.clear()
             _queue(client, 5, payload)
-            ctx.now_s = NOW_S + cycle * 60.0
+            # One dashboard interval per cycle, so the shared usage cache never
+            # answers in the app's place and every cycle really fetches.
+            ctx.now_s = NOW_S + cycle * tui.REFRESH_S
             await app.refresh_cycle()
             await pilot.pause()
             if cycle in (50, 200):

@@ -25,6 +25,18 @@ BACKOFF_S: Final = (60.0, 120.0, 240.0, 480.0)
 # surfaces use: the TUI as its timer, the web dashboard as its cache TTL.
 DASHBOARD_INTERVAL_S: Final = 180.0
 
+# How old a cached usage answer may be and still be served without a request.
+# One cache on disk serves every process, so this caps an account at one fetch per
+# ~3 min however many dashboards and `vibe list` runs are going. MIN_GAP_S under
+# the dashboard cadence, because a timer that fires a few ms early would otherwise
+# find its own last answer still fresh and show it for a second whole interval.
+USAGE_FRESH_S: Final = DASHBOARD_INTERVAL_S - MIN_GAP_S
+
+# The longest any account waits, and the oldest answer shown in place of a fresh
+# one. An hour holds the whole 60/120/240/480 ladder and any sane Retry-After, and
+# past it a percentage is a guess about a 5-hour session window, not a reading.
+USAGE_WAIT_CAP_S: Final = 3600.0
+
 
 @dataclass(frozen=True)
 class Due:

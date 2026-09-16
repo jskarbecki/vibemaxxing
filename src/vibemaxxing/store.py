@@ -7,6 +7,7 @@ a fresh temp file, fsynced, then ``os.replace``.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -86,6 +87,10 @@ def stash_path(root: Path, alias: str) -> Path:
 
 def history_path(root: Path) -> Path:
     return root / "history.db"
+
+
+def usage_path(root: Path, alias: str) -> Path:
+    return root / "usage" / f"{_checked(alias)}.json"
 
 
 def _claim_path(root: Path, alias: str) -> Path:
@@ -212,6 +217,83 @@ def write_account(root: Path, account: Account) -> None:
     )
 
 
+@dataclass(frozen=True)
+class UsageCache:
+    """The last usage answer for one account, shared by every process on the machine.
+
+    The endpoint's budget is per identity, not per process: a web dashboard, a TUI
+    and `vibe list` in three terminals each polling on their own timer spend one
+    budget three times over. ``payload`` is the server's JSON exactly as received
+    and holds no token. ``retry_at`` and ``failures`` carry the backoff across
+    processes, so a restart does not reset it and hammer an account mid-429.
+    """
+
+    added_at: float
+    fetched_at: float | None
+    payload: dict[str, object] | None
+    retry_at: float | None
+    failures: int
+    message: str | None
+
+
+def _epoch(value: object) -> float | None:
+    # bool is an int; a hand-edited `true` must not read as a timestamp of 1.0.
+    # No range check here: envelope only uses a time that sits within an hour of
+    # now, which is what keeps inf, nan and year 10000 away from datetime.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def read_usage_cache(root: Path, alias: str) -> UsageCache | None:
+    """None for a missing, unreadable or foreign file: a cache is never an error."""
+    try:
+        parsed: object = json.loads(usage_path(root, alias).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(parsed, dict) or parsed.get("schema") != SCHEMA_VERSION:
+        return None
+    added_at = _epoch(parsed.get("added_at"))
+    if added_at is None:
+        return None
+    fetched_at = _epoch(parsed.get("fetched_at"))
+    payload = parsed.get("payload")
+    failures = parsed.get("failures")
+    message = parsed.get("message")
+    # A payload without its timestamp could be shown as fresh forever, so the two
+    # are only ever kept together.
+    usable = isinstance(payload, dict) and fetched_at is not None
+    return UsageCache(
+        added_at=added_at,
+        fetched_at=fetched_at if usable else None,
+        payload={str(key): value for key, value in payload.items()}
+        if usable and isinstance(payload, dict)
+        else None,
+        retry_at=_epoch(parsed.get("retry_at")),
+        failures=failures if isinstance(failures, int) and not isinstance(failures, bool) else 0,
+        message=message if isinstance(message, str) else None,
+    )
+
+
+def write_usage_cache(root: Path, alias: str, cache: UsageCache) -> None:
+    # A cache that cannot be written costs the next poll one request. It must not
+    # cost this poll the numbers it already has.
+    with contextlib.suppress(OSError):
+        _write_json(
+            usage_path(root, alias),
+            root,
+            {
+                "schema": SCHEMA_VERSION,
+                "added_at": cache.added_at,
+                "fetched_at": cache.fetched_at,
+                "payload": cache.payload,
+                "retry_at": cache.retry_at,
+                "failures": cache.failures,
+                "message": cache.message,
+            },
+        )
+
+
 def delete_account(root: Path, alias: str) -> None:
     path = account_path(root, alias)
     if not path.exists():
@@ -228,6 +310,7 @@ def delete_account(root: Path, alias: str) -> None:
     # consumed as a successor if the alias were re-added, handing the new login a
     # refresh token the server killed weeks ago.
     delete_stash(root, alias)
+    usage_path(root, alias).unlink(missing_ok=True)
     release_refresh(root, alias)
     if read_active(root) == alias:
         (root / "active").unlink(missing_ok=True)
@@ -239,6 +322,10 @@ def rename_account(root: Path, old: str, new: str) -> None:
         raise UsageError(f'there is already an account named "{new}"', "vibe list")
 
     write_account(root, replace(account, alias=new))
+    # Carried, not dropped: a rename inside a 429 backoff would otherwise reset the
+    # ladder and fire at an endpoint that just asked us to wait.
+    with contextlib.suppress(OSError):
+        usage_path(root, old).replace(usage_path(root, new))
     stashed = read_stash(root, old)
     if stashed is not None:
         # An orphaned successor would leave the renamed account on a spent token.
