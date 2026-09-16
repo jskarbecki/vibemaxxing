@@ -1,0 +1,39 @@
+name: Bug report
+description: Something does not work the way the README says it does
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste a token**, a `~/.vibemaxxing/accounts/*.json` file, or an
+        unredacted `~/.claude.json`. Output printed by `vibe` is scrubbed and is safe
+        to paste; the files it reads are not.
+
+        Found a security issue? Do not file it here. See
+        [SECURITY.md](https://github.com/jskarbecki/vibemaxxing/blob/main/SECURITY.md).
+  - type: input
+    id: command
+    attributes:
+      label: The exact command you ran
+      placeholder: vibe switch work
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected instead
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Output of `vibe --version`
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and Python version
+      placeholder: macOS 15.5, Python 3.13
+    validations:
+      required: true

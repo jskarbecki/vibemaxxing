@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "layout-transition",
+        "value": "*",
+        "files": [
+          "src/vibemaxxing/index.html"
+        ],
+        "createdAt": "2026-09-16T10:34:54.667Z",
+        "reason": "docs/CONTRACT.md s11 pins 'transition: width 240ms cubic-bezier(0.23, 1, 0.32, 1)' as the page's only motion; tests/test_web.py asserts exactly one occurrence. Leaf span in a fixed-height track, repaints once per 60s poll. scaleX would distort the 2px border-radius."
+      }
+    ]
+  }
+}

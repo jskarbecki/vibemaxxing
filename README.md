@@ -1,24 +1,17 @@
 # vibemaxxing
 
-Manage several Claude Code accounts and see **pooled** plan usage across all of them —
-how much weekly headroom you have in total, and roughly when you run dry.
+Run several Claude Code accounts from one machine, switch between them in a second, and
+see all their plan limits in one place.
 
-macOS is first class. Linux works. Windows is unsupported in v1, and says so rather than
-half-working. Python 3.11+.
+If you have more than one Claude subscription, you already know the problem: the only way
+to change account is `/logout`, `/login`, browser, paste. And nothing anywhere tells you
+how much weekly headroom you have left across all of them.
 
 ```
-$ vibe list
-* work      jan@intra-ai.de   max
-    Session                   60%
-    Weekly · all models       68%
-    Weekly · Fable            77%  (warning)
-
-  personal  other@example.com max
-    Session                    4%
-    Weekly · all models       12%
-
-pool  1.43 account-weeks across 2 accounts  ·  dry in 31.5h
+vibe switch work
 ```
+
+![The dashboard: every account's limits on the left, the week ahead on the right](docs/media/dashboard.png)
 
 ## Install
 
@@ -26,73 +19,129 @@ pool  1.43 account-weeks across 2 accounts  ·  dry in 31.5h
 uv tool install vibemaxxing     # or: pipx install vibemaxxing
 ```
 
-Two console scripts, the same program: `vibemaxxing` and `vibe`.
+macOS and Linux. Python 3.11+. Two commands, same program: `vibe` and `vibemaxxing`.
 
-## Use
+## Start
 
 ```
-vibe                      open the dashboard
-vibe add                  adopt the login already in Claude Code (no network)
-vibe add <alias>          log in to another account in the browser
-vibe list                 every account, its limits, and the pooled headroom
-vibe switch <alias>       make one account the active Claude Code login
-vibe run <alias> -- <cmd> run one command pinned to one account
-vibe remove <alias>       forget an account
-vibe alias <old> <new>    rename an account
-vibe usage --once         fetch once and print
-vibe usage web            serve the dashboard on http://127.0.0.1:8787
+vibe add                  # store the account you are already logged in to
+vibe add side             # log a second one in, in the browser
+vibe list                 # see both, and what is left on them
+vibe switch side          # Claude Code is now that account
 ```
 
-`--json` works on every command and emits one documented envelope, the same one the web
-dashboard serves at `/api/usage`. The schema is frozen in
-[`docs/CONTRACT.md`](docs/CONTRACT.md) §10.
+`vibe add` with no name takes the login already in Claude Code, no browser and no
+network. That is the fastest way in: one command and you have your first account stored.
+
+## Every day
+
+```
+vibe                          open the dashboard in the terminal
+vibe usage web                open it in a browser at http://127.0.0.1:8787
+vibe list                     every account, its limits, the pooled total
+vibe switch <name>            change the active account
+vibe run <name> -- <cmd>      run one command as one account
+vibe remove <name>            forget an account
+vibe alias <old> <new>        rename one
+vibe help                     what each command is for
+```
+
+### switch, or run?
+
+`vibe switch work` changes the account **globally**, the same as logging out and back in.
+Claude Code sessions already running keep the old one until they restart.
+
+`vibe run work -- claude` pins **one command** to one account and leaves everything else
+alone. Two terminals can hold two different accounts at once:
+
+```
+vibe run work -- claude          # this window is "work"
+vibe run side -- claude          # that window is "side"
+```
+
+### See what is left
+
+```
+$ vibe list
+* work      you@example.com   max 20x
+    Session                   34%
+    Weekly · all models       61%
+    Weekly · Fable            12%
+
+  side      side@example.com  max
+    Session                    2%
+    Weekly · all models        9%
+
+pool  1.36 account-weeks across 2 accounts
+```
+
+**account-weeks** is the pooled number: one account with a fresh weekly limit is `1.00`.
+Two accounts each 50% spent is also `1.00`. It answers "how much Claude do I have left in
+total", which no single account's percentage can.
+
+The web dashboard adds the week ahead: one lane per account, a marker where that
+account's weekly limit resets, in your own timezone. So you can see whether a reset lands
+before your work does.
+
+### Scripting
+
+`--json` works on every command and prints one documented envelope, the same bytes the
+dashboard serves at `/api/usage`:
+
+```
+vibe list --json | jq '.pool.remaining_account_weeks'
+vibe list --json | jq -r '.resets[] | "\(.alias) \(.at)"'
+```
+
+The schema is frozen in [`docs/CONTRACT.md`](docs/CONTRACT.md) §10.
 
 ## How it works
 
-It swaps **credentials**, nothing else. One `~/.claude` history and one MCP config,
-shared by every account, exactly as if you had logged in and out by hand. On macOS the
-active credential is Claude Code's own Keychain item; on Linux it is
-`~/.claude/.credentials.json`.
+It swaps **credentials**, plus the one line of config that names them. One `~/.claude`
+history and one MCP config, shared by every account, exactly as if you had logged in and
+out by hand. On macOS the active credential is Claude Code's own Keychain item; on Linux
+it is `~/.claude/.credentials.json`.
+
+`vibe switch` also repoints `oauthAccount` in `~/.claude.json` and clears its
+`profileFetchedAt`, because Claude Code caches that profile for 24 h and would otherwise
+run on the new token while still showing the old account's email, org and limits. It
+refetches the rest itself on the next start, so a fresh machine needs no setup beyond
+`vibe add` and `vibe switch`.
 
 Tokens refresh on demand about five minutes before expiry, behind a consume gate: a
-refresh rotates the refresh token, so the successor is written to a stash on disk
-**before** the predecessor is treated as spent. A crash mid-refresh leaves a recoverable
-successor rather than a dead account.
+refresh rotates the refresh token, so the successor is written to disk **before** the
+predecessor is treated as spent. A crash mid-refresh leaves a recoverable successor
+rather than a dead account.
 
 It talks to three hosts and no others — `claude.ai`, `platform.claude.com`,
 `api.anthropic.com` — and refuses to contact anything else, redirects included. No
-version pings, no analytics, no telemetry.
+version pings, no analytics, no telemetry. The web dashboard binds `127.0.0.1`, and
+`--host` with anything else is a hard error.
 
 ## Known limitations
 
-These are real and deliberate. None of them is a bug report.
+Real and deliberate. None of these is a bug report.
+
+**Your tokens sit in plaintext JSON at rest.** `~/.vibemaxxing/accounts/*.json`, mode
+`0600`, directories `0700`. Anyone who can read your files can read your tokens — which
+is equally true of `~/.claude` itself.
 
 **The macOS Keychain write puts the credential in `argv`.** `vibe switch` shells out to
 `/usr/bin/security add-generic-password -w <blob>`, and macOS shows any local user a
-process's full argv through `ps`. For the length of one `exec`, the credential is readable
-cross-uid. The alternatives were measured and are worse: `security -i` silently truncates
-at ~4005 bytes and stores the truncated value — the real blob here is 4877 bytes and
-growing — and the Security framework refuses to read Claude Code's item from a process
-that is not in its ACL, which would put an authorization prompt in front of every switch.
-Multi-user macOS is out of scope for v1.
+process's full argv through `ps`. For the length of one `exec`, the credential is
+readable cross-uid. The alternatives were measured and are worse: `security -i` silently
+truncates at ~4005 bytes and stores the truncated value, and the Security framework
+refuses to read Claude Code's item from a process outside its ACL, which would put an
+authorization prompt in front of every switch. Multi-user macOS is out of scope for v1.
 
-**The store is plaintext JSON at rest.** `~/.vibemaxxing/accounts/*.json` holds your
-tokens, mode `0600`, directories `0700`. Anyone who can read your files can read your
-tokens — which is also true of `~/.claude` itself.
+**`vibe run` cannot refresh its own token.** It sets `CLAUDE_CODE_OAUTH_TOKEN` for the
+child only, which is what lets two shells hold two accounts, but a session outliving that
+access token needs a re-run. Every grandchild inherits the variable.
 
-**`vibe run` has two limits.** It sets `CLAUDE_CODE_OAUTH_TOKEN` in the child environment
-only, so the global credential is untouched and two shells can hold two accounts at once.
-But the child cannot refresh that token itself, so a session outliving the access token
-needs a re-run; and the variable bypasses account OAuth entirely, so the child does not
-read the Keychain at all. Every grandchild inherits it.
+**Switching does not reach a running session.** `vibe switch` makes no attempt to signal
+a live Claude Code process. Restart it, or use `vibe run`.
 
-**The web dashboard binds `127.0.0.1` and nothing else.** No authentication, no TLS —
-which is exactly why. `--host` with anything else is a hard error.
-
-**The poll scheduler is not wired to the dashboards.** `poll.Scheduler` implements the
-stagger and the `60/120/240/480` backoff, and is tested, but no live request goes through
-it. The dashboards instead poll every 180 s, which keeps them inside the endpoint's
-measured ~28-30 requests/identity/hour budget. See `docs/AUDIT.md`.
+**Windows is unsupported.** It says so rather than half-working.
 
 ## Uninstall
 
@@ -104,15 +153,10 @@ rm -rf ~/.vibemaxxing
 That is everything it creates. Your Claude Code login is untouched; whichever account was
 active stays active.
 
-## Development
+## Contributing
 
-```
-uv sync
-uv run ruff check . && uv run ruff format --check . && uv run mypy src && uv run pytest -q
-```
+Issues and pull requests welcome. [`CONTRIBUTING.md`](CONTRIBUTING.md) has the setup and
+the one command CI runs. [`docs/CONTRACT.md`](docs/CONTRACT.md) is the frozen design and
+the authority on any question of intent.
 
-[`docs/CONTRACT.md`](docs/CONTRACT.md) is the frozen design and the authority on every
-question of intent. [`docs/AUDIT.md`](docs/AUDIT.md) is the finding register.
-[`docs/RUNBOOK.md`](docs/RUNBOOK.md) is the operator's walkthrough.
-
-MIT. Jan Skarbecki <jan@intra-ai.de>
+MIT licensed. Not affiliated with Anthropic.
