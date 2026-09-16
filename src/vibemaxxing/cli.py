@@ -344,6 +344,40 @@ def cmd_run(args: argparse.Namespace, ctx: Context) -> int:
 
 # --- parser ------------------------------------------------------------------
 
+HELP: Final = """vibe — several Claude Code accounts, one pooled view of the plan limits.
+
+Getting started
+  vibe add                    adopt the login Claude Code already has here (no browser)
+  vibe add work               log in to another account; opens a browser, you paste a code
+  vibe switch work            point Claude Code at that account, then run `claude` normally
+
+Every day
+  vibe                        the dashboard, in the terminal
+  vibe list                   each account's limits and the pooled headroom
+  vibe run work -- claude     one command on one account; the active login is untouched
+  vibe usage web              the same dashboard in a browser, http://127.0.0.1:8787
+
+Housekeeping
+  vibe alias old new          rename an account
+  vibe remove work            forget an account (the login itself is not revoked)
+  vibe usage --once           fetch the numbers once and print them
+  vibe --version              the installed version
+
+switch or run?
+  `switch` is global and lasts: every shell, until you switch again. It swaps the
+  credential Claude Code itself reads, so a session started afterwards is on the new
+  account -- one already running is not.
+  `run` is one command only, on a token handed to that child process alone. Use it to
+  borrow headroom from another account without disturbing what you are logged in as.
+
+Good to know
+  Limits are per account. `vibe list` shows session, weekly-all-models and weekly-Fable,
+  plus how many account-weeks the pool has left and roughly when it runs dry.
+  Accounts share one ~/.claude history and one MCP config -- only the credential is
+  swapped, exactly as if you had logged out and in by hand.
+  `--json` works on every command and emits the envelope documented in docs/CONTRACT.md.
+  The web dashboard refetches at most every 3 minutes; `vibe list` always fetches now."""
+
 
 def _add_json(parser: argparse.ArgumentParser, *, root: bool = False) -> None:
     # Only the root parser carries a default. A subparser default would overwrite
@@ -357,10 +391,17 @@ def _add_json(parser: argparse.ArgumentParser, *, root: bool = False) -> None:
     )
 
 
+def cmd_help(args: argparse.Namespace, ctx: Context) -> int:
+    out(HELP + "\n")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="vibe",
         description="Manage several Claude Code accounts and see pooled plan usage.",
+        epilog=HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=__version__)
     _add_json(parser, root=True)
@@ -409,6 +450,12 @@ def build_parser() -> argparse.ArgumentParser:
     use.add_argument("--port", type=int, default=DEFAULT_PORT)
     _add_json(use)
     use.set_defaults(handler=cmd_usage)
+
+    # `vibe help` is what people type; without it argparse answers an unhelpful
+    # "invalid choice: 'help'" and lists the commands it just refused to explain.
+    helping = subs.add_parser("help", help="what each command is for, and when to use it")
+    _add_json(helping)
+    helping.set_defaults(handler=cmd_help)
 
     return parser
 
