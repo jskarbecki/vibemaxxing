@@ -5,8 +5,11 @@ not: a PyPI version number can never be reused, and a public repo's history is p
 good. Nothing in this repository publishes on its own — the workflow in
 `.github/workflows/publish.yml` fires only on a GitHub release being *published*.
 
-Status as of 2026-09-16: `main` is green, the wheel builds and installs clean, the name
-`vibemaxxing` is unclaimed on PyPI, and the repository is still private.
+Status as of 2026-09-16: the history rewrite is pushed and verified clean on GitHub,
+`v0.2.0rc1` is published to TestPyPI and was installed and exercised from that index,
+`v0.2.0` is tagged and waiting. The name `vibemaxxing` is still unclaimed on PyPI and the
+repository is still private. **Two things remain before the repo can go public: the
+`pypi` environment, and the decision itself.**
 
 ---
 
@@ -22,10 +25,10 @@ Status as of 2026-09-16: `main` is green, the wheel builds and installs clean, t
       - PyPI project name: `vibemaxxing`
       - Owner: `jskarbecki`  ·  Repository: `vibemaxxing`
       - Workflow: `publish.yml`  ·  Environment: `pypi`
-- [ ] **Decide the version.** `pyproject.toml` still says `0.1.0`, and the tag `v0.1.0`
-      already exists locally with different content. Everything since is unreleased, so
-      cut **`0.2.0`**: bump `version` in `pyproject.toml`, move the `[Unreleased]` block
-      in `CHANGELOG.md` under `## [0.2.0] - <date>`, commit, tag `v0.2.0`.
+- [x] **Version cut.** `0.2.0`, tagged `v0.2.0` and pushed. `uv.lock` records the
+      project's own version and CI runs `uv sync --locked` first, so the lockfile moves
+      with `pyproject.toml` in the same commit; leaving it behind fails the release run
+      at its first step.
 - [ ] **Re-read `SECURITY.md` and the README's "Known limitations".** Once this is public,
       those two sections are the entire basis on which someone decides whether to trust it
       with their tokens. They are honest right now. Keep them that way.
@@ -38,20 +41,16 @@ Status as of 2026-09-16: `main` is green, the wheel builds and installs clean, t
       2026-09-16 and the result was force-pushed. `jan@intra-ai.de` is deliberately kept:
       it is the maintainer contact in `pyproject.toml` and `SECURITY.md`.
 
-- [ ] **Confirm the screenshot is the demo one.** `docs/media/dashboard.png` must show
-      `you@example.com` / `side@example.com` / `team@example.com`, never your accounts.
-      Regenerate any time with `uv run python scripts/demo_dashboard.py`.
-- [ ] **Set the repo's topics and homepage** so it is findable:
-      ```
-      gh repo edit jskarbecki/vibemaxxing \
-        --homepage https://pypi.org/project/vibemaxxing/ \
-        --add-topic claude --add-topic claude-code --add-topic anthropic \
-        --add-topic cli --add-topic developer-tools --add-topic account-switcher
-      ```
+- [x] **Screenshot confirmed the demo one.** Shows `you@example.com` / `side@example.com`
+      / `team@example.com`, never real accounts. Regenerate with
+      `uv run python scripts/demo_dashboard.py`.
+- [x] **Topics and homepage set.** `claude`, `claude-code`, `anthropic`, `cli`,
+      `developer-tools`, `account-switcher`, `oauth`; homepage points at the PyPI page.
 - [ ] **Turn on branch protection for `main`** once other people can open PRs: require the
       CI check, and require a PR rather than a direct push.
 - [ ] **Enable private vulnerability reporting.** Settings → Code security. `SECURITY.md`
-      links to that form and the link 404s until it is on.
+      links to that form and the link 404s until it is on. The API returns 404 while the
+      repository is private, so this one has to wait until after it goes public.
 - [ ] **Add a `CODE_OF_CONDUCT.md`** if you want one. GitHub will suggest Contributor
       Covenant and generate it in two clicks. Optional, and a real commitment to enforce.
 - [ ] **Pin the GitHub Actions to commit SHAs** rather than tags (`actions/checkout@v4`
@@ -59,23 +58,28 @@ Status as of 2026-09-16: `main` is green, the wheel builds and installs clean, t
 - [ ] **Decide on Dependabot.** One runtime dependency, so low value, but it is free:
       `.github/dependabot.yml` for `uv` and `github-actions`.
 
-## 3. Test the whole path first, on TestPyPI
+## 3. Test the whole path first, on TestPyPI — DONE 2026-09-16
 
-This is the rehearsal, and it is free. Cut a **prerelease** — the workflow's `pypi` job is
-gated on `github.event.release.prerelease == false`, so a prerelease goes to TestPyPI and
-stops there.
+- [x] Released `v0.2.0rc1` as a pre-release. Run `35125662123`: **TestPyPI success, PyPI
+      skipped**, which is the gate behaving exactly as written.
+- [x] Installed it from the TestPyPI index into a clean venv and exercised it:
 
-- [ ] Tag and release `v0.2.0rc1` as a **pre-release** on GitHub.
-- [ ] Watch the `TestPyPI` job go green.
-- [ ] Install it clean and run it:
-      ```
-      uv tool install --index-url https://test.pypi.org/simple/ \
-        --extra-index-url https://pypi.org/simple/ vibemaxxing==0.2.0rc1
-      vibe help && vibe list
-      ```
-- [ ] Open <https://test.pypi.org/project/vibemaxxing/> and check the README renders and
-      the screenshot loads. **The image only appears once the repo is public** — it points
-      at `raw.githubusercontent.com`. Expect it broken here, and check it again after.
+      | check | result |
+      |---|---|
+      | `vibe --version` | `0.2.0rc1` |
+      | `vibe list`, empty HOME | `no accounts yet — run: vibe add`, exit 0 |
+      | `vibe list --json`, empty HOME | valid envelope, `resets: []` |
+      | `vibe add`, no Claude Code login | names the problem and `claude /login`, exit 3 |
+      | `vibe help` | renders |
+      | `vibe usage web` | `GET / -> 200`, page served from package data |
+      | against the real accounts | 5 accounts, plans, pooled total and all 5 resets |
+
+      `--extra-index-url https://pypi.org/simple/` is required: TestPyPI has no `textual`.
+
+- [ ] Open <https://test.pypi.org/project/vibemaxxing/> and look at the page. The
+      screenshot will be broken there and that is expected — it points at
+      `raw.githubusercontent.com` on a repository that is still private. It resolves the
+      moment the repo goes public. Check it again after.
 
 ---
 
