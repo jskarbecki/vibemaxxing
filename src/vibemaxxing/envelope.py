@@ -7,6 +7,7 @@ same bytes because they call the same two functions.
 
 from __future__ import annotations
 
+import contextlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -16,8 +17,9 @@ from typing import Final
 
 from vibemaxxing import credentials, oauth, store, usage
 from vibemaxxing.credentials import EMPTY_IDENTITY, Credential, Identity
-from vibemaxxing.errors import VibeError
+from vibemaxxing.errors import StoreError, VibeError
 from vibemaxxing.httpclient import HttpClient, HTTPError
+from vibemaxxing.keychain import KeychainPort
 from vibemaxxing.models import AccountState
 from vibemaxxing.poll import BACKOFF_S, USAGE_FRESH_S, USAGE_WAIT_CAP_S
 from vibemaxxing.pool import WEEKLY_ALL_KIND, AccountUsage, pool_remaining
@@ -119,6 +121,10 @@ def _usable_credential(
         return outcome.credential, None
     if outcome.error in _DEAD_REFRESH:
         return None, _needs_login(alias)
+    if outcome.error == "active":
+        # A `vibe switch` to this account landed mid-poll; the next poll reads it
+        # as the active account.
+        return None, "this account just became active - run: vibe list"
     if outcome.error == "invalid_client":
         # Systemic: our client id was rejected. Not this account's fault, so it
         # must not read as "go and log in again".
@@ -146,6 +152,8 @@ def _usage_view(
     client: HttpClient,
     now_s: float,
     base: AccountView,
+    *,
+    can_fetch_why: str = "",
 ) -> AccountView:
     """Serve an account's usage from the shared cache, the endpoint, or the last answer.
 
@@ -189,9 +197,15 @@ def _usage_view(
         problem = cached.message or f"backing off - next try {_hhmm(wait_until)}"
         return last_answer(problem, problem)
 
+    if can_fetch_why:
+        return last_answer(can_fetch_why, can_fetch_why)
+
     # Only on a poll that is about to spend a request anyway: a plan-less account
     # would otherwise ask the profile endpoint on every cached or waiting cycle.
-    base = replace(base, plan=_fill_plan(root, alias, credential, client) or base.plan)
+    # Never for the active account: the backfill rewrites the account file, and a
+    # `vibe switch` resync landing between its read and write would be undone.
+    if not base.active:
+        base = replace(base, plan=_fill_plan(root, alias, credential, client) or base.plan)
 
     # ponytail: no cross-process lock, so two processes whose caches expire in the
     # same instant both fetch once. Bounded at one extra request per process per
@@ -258,8 +272,70 @@ def _usage_view(
     return replace(base, summary=usage.summarize(payload), updated_at=now_s)
 
 
+def active_token(
+    root: Path, account: store.Account, port: KeychainPort, *, now_ms: int, buffer_ms: int = 0
+) -> tuple[Credential | None, str]:
+    """A token for the active account that needs no refresh, or why there is none.
+
+    The refresh token rotates on every refresh, so a lineage survives one
+    refresher, and for the active account that is Claude Code. A second one here
+    is how an account read "login lapsed" the morning after `vibe add`, and the
+    other way round it logs Claude Code out. So nothing here refreshes and nothing
+    here writes (oauth.refresh refuses the active alias too): `vibe switch` is the
+    one place the store is resynced from the port.
+
+    The port's token is borrowed only when ~/.claude.json and the account name the
+    same uuid, both known, and the token is not a copy of another account's stored
+    one. Unknown is not agreement, and `vibe switch` writes the port a moment
+    before it writes ~/.claude.json and `active`: in between, the port holds the
+    incoming account's token under the outgoing account's name. Otherwise the
+    stored access token, until it expires.
+    """
+    read_problem = None
+    live = None
+    try:
+        raw = port.read()
+    except VibeError as exc:
+        raw, read_problem = None, exc.message
+    stored_uuid = account.identity.account_uuid
+    if raw is not None and stored_uuid is not None:
+        live_uuid = credentials.read_claude_identity(Path.home() / ".claude.json").account_uuid
+        if live_uuid == stored_uuid:
+            with contextlib.suppress(StoreError):
+                live = credentials.parse_blob(raw)
+    if live is not None and _stored_elsewhere(root, account.alias, live):
+        live = None
+    for candidate in (live, account.credential):
+        if candidate is not None and now_ms + buffer_ms < candidate.expires_at_ms:
+            return candidate, ""
+    if read_problem is not None:
+        return None, f"token expired and Claude Code's credential is unreadable: {read_problem}"
+    if stored_uuid is None:
+        # Nothing ties Claude Code's token to this account, so its refreshes can
+        # never be borrowed. Switching away lets vibe refresh this account again.
+        return None, "token expired - no account id stored to match Claude Code's login"
+    return None, "token expired - vibe leaves the active account's token to Claude Code"
+
+
+def _stored_elsewhere(root: Path, alias: str, live: Credential) -> bool:
+    for other in store.list_aliases(root):
+        if other == alias:
+            continue
+        with contextlib.suppress(VibeError):
+            if store.read_account(root, other).credential.access_token == live.access_token:
+                return True
+    return False
+
+
 def _view(
-    root: Path, alias: str, *, active: bool, client: HttpClient, now_s: float, fetch: bool
+    root: Path,
+    alias: str,
+    *,
+    active: bool,
+    client: HttpClient,
+    port: KeychainPort,
+    now_s: float,
+    fetch: bool,
 ) -> AccountView:
     now_ms = int(now_s * 1000)
     try:
@@ -273,6 +349,15 @@ def _view(
     plan = credentials.plan_label(
         account.credential.subscription_type, account.credential.rate_limit_tier
     )
+
+    if active:
+        token, problem = active_token(root, account, port, now_ms=now_ms)
+        base = AccountView(alias, active, AccountState.OK, None, identity, plan, None, None)
+        if not fetch:
+            return base
+        return _usage_view(
+            root, account, token or account.credential, client, now_s, base, can_fetch_why=problem
+        )
 
     try:
         # Inside the guard: read_stash on an unreadable or unknown-schema stash
@@ -296,11 +381,19 @@ def _view(
 
 
 def collect(
-    root: Path, *, client: HttpClient, now_s: float, fetch: bool = True
+    root: Path, *, client: HttpClient, port: KeychainPort, now_s: float, fetch: bool = True
 ) -> list[AccountView]:
     active = store.read_active(root)
     return [
-        _view(root, alias, active=alias == active, client=client, now_s=now_s, fetch=fetch)
+        _view(
+            root,
+            alias,
+            active=alias == active,
+            client=client,
+            port=port,
+            now_s=now_s,
+            fetch=fetch,
+        )
         for alias in store.list_aliases(root)
     ]
 

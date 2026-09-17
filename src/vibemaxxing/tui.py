@@ -212,7 +212,8 @@ class Dashboard(App[None]):
         # collect() refreshes tokens and fetches usage: off the event loop, or
         # the dashboard stops answering keys for the length of a timeout.
         views = await asyncio.get_running_loop().run_in_executor(
-            self._pool, partial(envelope.collect, ctx.root, client=ctx.client, now_s=now_s)
+            self._pool,
+            partial(envelope.collect, ctx.root, client=ctx.client, port=ctx.port, now_s=now_s),
         )
         weeks = envelope.pool_weeks(views)
         forecast = None

@@ -144,7 +144,7 @@ def snapshot(ctx: Context, recorder: Recorder | None = None) -> dict[str, object
     # A live clock, not ctx.now_s: this process stays up for days, and a frozen
     # timestamp would evaluate every token's expiry against process start.
     now_s = ctx.clock()
-    views = collect(ctx.root, client=ctx.client, now_s=now_s)
+    views = collect(ctx.root, client=ctx.client, port=ctx.port, now_s=now_s)
     # A cycle where an account failed to fetch reports a pool that is missing
     # that account's headroom. Recording it would store a transient 429 as a
     # genuine collapse and poison dry_in for as long as it stays in the window.

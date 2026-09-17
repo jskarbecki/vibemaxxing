@@ -172,6 +172,10 @@ def refresh(
     *,
     now_ms: int,
 ) -> RefreshOutcome:
+    # The active account's lineage is Claude Code's: it refreshes the Keychain
+    # copy, and the refresh token survives only one refresher. CONTRACT section 8.
+    if store.read_active(root) == alias:
+        return RefreshOutcome(None, "active")
     # A stash means the last run was interrupted after the server rotated the
     # token. Posting the predecessor again would just earn an invalid_grant.
     successor = store.read_stash(root, alias)
@@ -185,6 +189,12 @@ def refresh(
             return RefreshOutcome(None, "no_refresh_token")
         if not store.claim_refresh(root, alias, now_s=now_ms / 1000):
             return RefreshOutcome(None, "busy")
+        # Again under the claim: `vibe switch` takes the same claim before it
+        # writes this account into the Keychain, so a switch that landed after the
+        # check above is visible here, and one that has not started yet waits.
+        if store.read_active(root) == alias:
+            store.release_refresh(root, alias)
+            return RefreshOutcome(None, "active")
         claimed = True
         try:
             payload = _post_token(

@@ -50,3 +50,12 @@ def test_default_port_picks_by_platform_and_refuses_windows(
     # No PATH hijack, and the fixed item name is what Claude Code actually uses.
     assert SECURITY_BIN == "/usr/bin/security"
     assert CLAUDE_CODE_KEYCHAIN_SERVICE == "Claude Code-credentials"
+
+
+def test_a_file_credential_that_is_not_utf8_is_unreadable_not_a_crash(tmp_home: Path) -> None:
+    path = tmp_home / ".claude" / ".credentials.json"
+    path.parent.mkdir()
+    path.write_bytes(b"\xff\xfe not utf-8")
+
+    with pytest.raises(VibeError):
+        FileKeychain().read()

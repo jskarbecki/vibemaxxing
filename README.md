@@ -148,6 +148,14 @@ reuses one answer per account for about 3 minutes. An account that gets rate lim
 and shows its last numbers and the time they are from in the meantime. Numbers more than
 an hour old are not shown at all.
 
+**The active account's token is Claude Code's to refresh.** Neither the dashboard nor
+`vibe run` refreshes it, because refreshing one token from two places kills whichever side
+goes second. If no Claude Code session has run since the token expired (about 8 hours),
+the active account shows its last numbers for up to an hour and then a message saying
+so, and `vibe run` on it asks you to start `claude` once. `vibe switch` and `vibe alias`
+refuse while a token refresh or another switch is under way; run them again, or wait
+30 seconds if one was killed mid-way.
+
 **Windows is unsupported.** It says so rather than half-working.
 
 ## Uninstall

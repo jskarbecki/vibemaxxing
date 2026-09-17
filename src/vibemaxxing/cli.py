@@ -216,7 +216,7 @@ def cmd_add(args: argparse.Namespace, ctx: Context) -> int:
 
 
 def _collect_and_record(ctx: Context) -> tuple[list[AccountView], float | None]:
-    views = envelope.collect(ctx.root, client=ctx.client, now_s=ctx.now_s)
+    views = envelope.collect(ctx.root, client=ctx.client, port=ctx.port, now_s=ctx.now_s)
     with closing(history.connect(store.history_path(ctx.root))) as conn:
         history.record(conn, at_s=ctx.now_s, pool=envelope.pool_weeks(views))
         window = history.samples(conn, since_s=ctx.now_s - history.RETENTION_DAYS * 86_400.0)
@@ -304,6 +304,16 @@ def cmd_alias(args: argparse.Namespace, ctx: Context) -> int:
 def _fresh_token(ctx: Context, alias: str) -> Credential:
     account = store.read_account(ctx.root, alias)
     now_ms = int(ctx.now_s * 1000)
+    if store.read_active(ctx.root) == alias:
+        # Claude Code refreshes this lineage; refreshing it here too logs it out.
+        # With the refresh buffer: the child cannot refresh, so a token with
+        # seconds left would fail inside it.
+        token, problem = envelope.active_token(
+            ctx.root, account, ctx.port, now_ms=now_ms, buffer_ms=credentials.EXPIRY_BUFFER_MS
+        )
+        if token is None:
+            raise VibeError(problem, "claude")
+        return token
     if credentials.login_lapsed(account.credential, now_ms=now_ms):
         raise NeedsLoginError(f'the login for "{alias}" has lapsed', f"vibe add {alias}")
     if not credentials.is_expired(account.credential, now_ms=now_ms):
@@ -311,6 +321,8 @@ def _fresh_token(ctx: Context, alias: str) -> Credential:
     outcome = oauth.refresh(ctx.root, alias, account.credential, ctx.client, now_ms=now_ms)
     if outcome.credential is not None:
         return outcome.credential
+    if outcome.error == "active":
+        raise UsageError(f'"{alias}" became the active account', f"vibe run {alias} -- ...")
     if outcome.error in ("invalid_grant", "no_refresh_token"):
         raise NeedsLoginError(f'the refresh token for "{alias}" is dead', f"vibe add {alias}")
     # transient, busy, invalid_client: the login is fine, the attempt was not, so

@@ -504,12 +504,23 @@ stdout pipe, never in argv.
 
 **Switch order is fixed** (AC10), and every step is load-bearing:
 
+0. Take the refresh claim (`locks/<alias>.claim`) of the incoming and the outgoing
+   account, held until the switch returns, then re-read `active`. A claim already held,
+   or an `active` that moved since it was first read, fails the switch with `UsageError`
+   and recovery `vibe switch <alias>`: a refresh in flight would otherwise finish after
+   its spent predecessor was copied into the port, and a switch that just ran would have
+   the resync below write one account's tokens into another's file. `vibe alias` holds
+   the claims of both names the same way, so no poll sees a not-yet-active copy of the
+   active account.
 1. Read the port once. Keep the whole blob — it has siblings (§7).
 2. Parse its `claudeAiOauth` and write it back to the **outgoing** account's file.
    Claude Code rotates the active token behind our back; skipping this resync loses that
    rotation and strands the outgoing account on a spent token.
-3. Build the incoming blob with `credential_to_blob(incoming, base=the blob from step 1)`
-   so `mcpOAuth` and any future sibling survive.
+3. If the incoming account has a stash, write it into its account file and delete it.
+   A stash is a refresh the server completed that the file never got, and once active
+   the account is never refreshed, so it would never be consumed. Build the incoming
+   blob with `credential_to_blob(incoming, base=the blob from step 1)` so `mcpOAuth` and
+   any future sibling survive.
 4. Write the port.
 5. Repoint `oauthAccount` in `~/.claude.json` at the incoming account and delete its
    `profileFetchedAt`. Claude Code caches the logged-in profile there and skips the
@@ -525,6 +536,39 @@ Step 5 happens **after** step 4: the identity file only says who the credential 
 to, so it must never name the incoming account while the port still holds the outgoing
 one. The resync in step 2 happens **before** the overwrite in step 4. A test with an
 in-memory fake port asserts that ordering.
+
+### The active account's token belongs to Claude Code (0.2.2)
+
+The refresh token rotates on every refresh, so a lineage survives only one refresher.
+For the active account that is Claude Code, whether or not a session is running right
+now. Nothing in `vibe` refreshes it, and only `switch` step 2 writes a credential taken
+from the port:
+
+- `oauth.refresh` returns error `active` for the active alias, checked once on entry,
+  which also keeps it from consuming the active alias's stash, and again after taking the
+  refresh claim. `switch` and `vibe alias` hold that claim (step 0), so a poll that read
+  `active` before either cannot refresh the lineage in the port. An empty or unparsable
+  claim file counts as lapsed only once it is older than the lease, since that is what a
+  claim looks like before its write lands. A holder stalled past the 30 s lease, such as
+  a laptop asleep mid-refresh, can still be taken over.
+- A poll uses `envelope.active_token` for the active account, and `vibe run <active>`
+  uses it with the 5-minute expiry buffer, since the child cannot refresh. It picks the
+  port's token when `~/.claude.json` and the account name the same uuid, both known, and
+  that token is not another account's stored access token (`switch` writes the port a
+  moment before `~/.claude.json` and `active`). Otherwise the stored access token. Either
+  only until it expires.
+- When neither is usable, a poll makes no request and shows the cached answer under §14's
+  rules with a message naming why: `token expired - vibe leaves the active account's token
+  to Claude Code`, the Keychain's own error when the port could not be read, or `no
+  account id stored to match Claude Code's login` for an account whose login returned no
+  uuid (switching away is the only way to refresh that one). `state` becomes `error` once
+  no answer an hour old or younger remains. `vibe run` fails with recovery `claude`.
+- The plan backfill never runs for the active account: it rewrites the account file, and
+  a `switch` resync landing inside that read-write would be undone.
+
+Before 0.2.2 the stored copy was refreshed. Whichever of the two refreshers went second
+held a spent token: when that was us, the account read `login lapsed` hours after
+`vibe add`; when it was Claude Code, its own session was logged out.
 
 ---
 

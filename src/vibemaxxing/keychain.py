@@ -95,7 +95,9 @@ class MacKeychain:
                 timeout=SECURITY_TIMEOUT_S,
                 check=False,
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        # UnicodeDecodeError: a non-UTF-8 item must read as unreadable, not escape as a
+        # traceback from every dashboard poll.
+        except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError) as exc:
             raise VibeError(
                 f"could not run {SECURITY_BIN}: {exc.__class__.__name__}",
                 _RECOVERY,
@@ -111,7 +113,7 @@ class FileKeychain:
             return self._path().read_text(encoding="utf-8")
         except FileNotFoundError:
             return None
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             raise VibeError(
                 f"could not read {self._path()}: {exc.__class__.__name__}",
                 _RECOVERY,

@@ -12,7 +12,7 @@ import json
 import os
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final
@@ -317,6 +317,14 @@ def delete_account(root: Path, alias: str) -> None:
 
 
 def rename_account(root: Path, old: str, new: str) -> None:
+    # Under both claims: between writing `new` and moving `active`, a poll would
+    # otherwise see a not-yet-active copy of the active account and refresh
+    # Claude Code's lineage.
+    with _claims(root, (old, new), f"vibe alias {old} {new}"):
+        _rename_claimed(root, old, new)
+
+
+def _rename_claimed(root: Path, old: str, new: str) -> None:
     account = read_account(root, old)
     if account_path(root, new).exists():
         raise UsageError(f'there is already an account named "{new}"', "vibe list")
@@ -402,26 +410,65 @@ def _claim_lapsed(path: Path, now_s: float) -> bool:
     try:
         parsed = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        parsed = None
+    until_ms = parsed.get("until_ms") if isinstance(parsed, dict) else None
+    if isinstance(until_ms, (int, float)) and not isinstance(until_ms, bool):
+        return now_s * 1000 >= until_ms
+    # Empty or garbled: also what claim_refresh's own O_EXCL create looks like
+    # before its write lands, so it is only lapsed once older than a lease.
+    # ponytail: a holder stalled past the lease (a laptop asleep mid-POST) is still
+    # taken over; an flock held for the operation is the upgrade if that shows.
+    try:
+        return path.stat().st_mtime + CLAIM_LEASE_S <= now_s
+    except OSError:
         return True
-    if not isinstance(parsed, dict):
-        return True
-    until_ms = parsed.get("until_ms")
-    if not isinstance(until_ms, (int, float)):
-        return True
-    return now_s * 1000 >= until_ms
 
 
 def release_refresh(root: Path, alias: str) -> None:
     _claim_path(root, alias).unlink(missing_ok=True)
 
 
+@contextlib.contextmanager
+def _claims(root: Path, names: Iterable[str | None], recovery: str) -> Iterator[None]:
+    """Hold the refresh claims of ``names`` for the length of a change to `active`.
+
+    oauth.refresh re-reads `active` under the same claim, so a refresh either
+    finishes before the change starts or sees it. A claim already held means a
+    refresh, switch or rename is under way, or one died within the lease.
+    """
+    claimed: list[str] = []
+    try:
+        for name in dict.fromkeys(n for n in names if n is not None):
+            if not claim_refresh(root, name, now_s=time.time()):
+                raise UsageError(
+                    f'a token refresh or switch for "{name}" is in progress '
+                    f"(a lock left by a stopped one clears within {CLAIM_LEASE_S:.0f} s)",
+                    recovery,
+                )
+            claimed.append(name)
+        yield
+    finally:
+        for name in claimed:
+            release_refresh(root, name)
+
+
 def switch(root: Path, alias: str, port: KeychainPort) -> None:
     read_account(root, alias)  # an unknown alias must fail before the port is touched
 
+    outgoing = read_active(root)
+    with _claims(root, (alias, outgoing), f"vibe switch {alias}"):
+        # Re-read under the claims: a switch that finished between the read above
+        # and the claims put a different account in the port, and resyncing it
+        # into `outgoing` would write one account's tokens into another's file.
+        if read_active(root) != outgoing:
+            raise UsageError("another vibe switch just ran", f"vibe switch {alias}")
+        _switch_claimed(root, alias, outgoing, port)
+
+
+def _switch_claimed(root: Path, alias: str, outgoing: str | None, port: KeychainPort) -> None:
     base_raw = port.read()
     base = parse_blob_members(base_raw) if base_raw is not None else None
 
-    outgoing = read_active(root)
     if base_raw is not None and outgoing is not None and account_path(root, outgoing).exists():
         # Claude Code rotates the live token behind our back; without this resync
         # the outgoing account is stranded on a token the server already killed.
@@ -441,6 +488,15 @@ def switch(root: Path, alias: str, port: KeychainPort) -> None:
     # Re-read: switching to the account that was already active must keep the
     # credential the resync just wrote, not the copy read before it.
     incoming = read_account(root, alias)
+    # A stash is a refresh the server completed but the account file never got:
+    # the live lineage, where the file holds its spent predecessor. It has to land
+    # before the port, because once active the account is never refreshed and the
+    # stash would never be consumed -- only overwritten on the way back out.
+    successor = read_stash(root, alias) if alias != outgoing else None
+    if successor is not None:
+        incoming = replace(incoming, credential=successor)
+        write_account(root, incoming)
+        delete_stash(root, alias)
     port.write(credential_to_blob(incoming.credential, base))
     # After the port, never before: the identity file only describes who the
     # credential belongs to, so it must not name the incoming account while the

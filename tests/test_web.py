@@ -79,7 +79,7 @@ def account_envelope(tmp_home: Path) -> dict[str, object]:
     seed_account(root, "work", active=True)
     client = FakeHttpClient()
     client.queue_json(200, fixture_usage())
-    views = envelope.collect(root, client=client, now_s=NOW_S)
+    views = envelope.collect(root, client=client, port=FakeKeychain(), now_s=NOW_S)
     return envelope.build(views, now_s=NOW_S)
 
 
@@ -271,7 +271,7 @@ def test_a_plan_less_account_backfills_its_plan_once(tmp_home: Path) -> None:
     )
     client.queue_json(200, fixture_usage())
 
-    views = envelope.collect(root, client=client, now_s=NOW_S)
+    views = envelope.collect(root, client=client, port=FakeKeychain(), now_s=NOW_S)
 
     assert [view.plan for view in views] == ["max 20x"]
     stored = store.read_account(root, "work").credential
@@ -281,7 +281,10 @@ def test_a_plan_less_account_backfills_its_plan_once(tmp_home: Path) -> None:
     # so only the usage request goes out.
     client.queue_json(200, fixture_usage())
     later = NOW_S + USAGE_FRESH_S
-    assert [view.plan for view in envelope.collect(root, client=client, now_s=later)] == ["max 20x"]
+    assert [
+        view.plan
+        for view in envelope.collect(root, client=client, port=FakeKeychain(), now_s=later)
+    ] == ["max 20x"]
     assert [request.url for request in client.requests].count(usage.PROFILE_URL) == 1
     assert client.responses == []
 
@@ -293,7 +296,7 @@ def test_a_failing_profile_endpoint_costs_only_the_plan(tmp_home: Path) -> None:
     client.queue(HTTPError(500, b"boom"))
     client.queue_json(200, fixture_usage())
 
-    views = envelope.collect(root, client=client, now_s=NOW_S)
+    views = envelope.collect(root, client=client, port=FakeKeychain(), now_s=NOW_S)
 
     assert views[0].plan is None
     assert views[0].state is AccountState.OK
