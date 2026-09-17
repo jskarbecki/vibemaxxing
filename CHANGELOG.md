@@ -3,6 +3,26 @@
 Notable changes per release. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-09-17
+
+### Fixed
+
+- **The active account showed "the login has lapsed" hours after `vibe add`, and could
+  log Claude Code out.** Claude Code refreshes the active account's token in the Keychain
+  and the server rotates the refresh token each time, but the dashboard kept refreshing
+  its own stored copy of the same lineage. Whichever refreshed second held a spent token.
+  Nothing refreshes the active account any more, checked again under the refresh lock
+  that `vibe switch` now also holds. The dashboard and `vibe run` use the Keychain's token
+  when `~/.claude.json` names the same account, else the stored one, until it expires.
+  `vibe switch` and `vibe alias` hold the refresh locks of both accounts and refuse while
+  one is held.
+- **`vibe switch` could put a spent token into the Keychain.** A refresh interrupted after
+  the server rotated the token leaves the live successor in a stash; switching to that
+  account wrote the account file's spent predecessor instead. The stash now goes in.
+  `CONTRACT.md` §8.
+- A non-UTF-8 `~/.claude/.credentials.json` no longer crashes every poll on Linux, nor a
+  non-UTF-8 Keychain item on macOS.
+
 ## [0.2.1] - 2026-09-16
 
 ### Fixed
@@ -60,6 +80,7 @@ a Textual dashboard, a loopback web dashboard, and a documented `--json` envelop
 
 Published to TestPyPI only, to prove the release pipeline.
 
+[0.2.2]: https://github.com/jskarbecki/vibemaxxing/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/jskarbecki/vibemaxxing/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/jskarbecki/vibemaxxing/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jskarbecki/vibemaxxing/releases/tag/v0.1.0
