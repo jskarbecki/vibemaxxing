@@ -86,9 +86,9 @@ It is deliberately timid:
   you have not stored, it stops and tells you to `vibe add` it first. That check needs every
   account you stored to have an account id: if one has none, vibe cannot tell and falls back
   to the old behaviour.
-- It stays, and says so, while vibe's active account and the live login disagree. Run
-  `vibe switch <the live account>` once and it carries on. It also stays when the live
-  account is stored without an account id, and never switches onto such an account.
+- If vibe's active account and the live login disagree (after a `claude /login`), it points
+  vibe at the live account first and carries on. It stays when that repair is refused, when
+  the live account is stored without an account id, and never switches onto such an account.
 - 15 minutes between switches, and `vibe auto undo` goes back.
 - While the live account is at 90% or more, it is asked for fresh numbers about every one to
   two minutes instead of three. That is a lot of requests against a budget measured at about

@@ -233,11 +233,12 @@ def _usage_view(
         # and 5xx. Containing it here rather than in each surface is what makes
         # the CLI, the TUI and the web page behave the same on a bad day.
         if not _transient(exc.status):
-            return replace(
-                base,
-                state=AccountState.ERROR,
-                message=f"the usage endpoint answered HTTP {exc.status} - run: vibe list",
-            )
+            # Running `vibe list` again is what drew this. A refused token is fixed by a
+            # new login; any other 4xx has no recovery vibe can name.
+            message = f"the usage endpoint answered HTTP {exc.status}"
+            if exc.status in (401, 403):
+                message += f" - the token was refused, run: vibe add {alias}"
+            return replace(base, state=AccountState.ERROR, message=message)
         failures = (cached.failures if cached is not None else 0) + 1
         step_s = BACKOFF_S[min(failures, len(BACKOFF_S)) - 1]
         retry_at = now_s + min(max(step_s, exc.retry_after_s or 0.0), USAGE_WAIT_CAP_S)

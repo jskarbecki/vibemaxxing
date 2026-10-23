@@ -22,7 +22,13 @@ import pytest
 from tests.fakes import FakeHttpClient, FakeKeychain, make_credential, seed_account
 from vibemaxxing import auto, cli, credentials, oauth, store, usage
 from vibemaxxing.credentials import Identity, credential_to_blob
-from vibemaxxing.errors import NeedsLoginError, NetworkError, NotFoundError, VibeError
+from vibemaxxing.errors import (
+    NeedsLoginError,
+    NetworkError,
+    NotFoundError,
+    UsageError,
+    VibeError,
+)
 from vibemaxxing.httpclient import HTTPError
 from vibemaxxing.models import AccountState
 from vibemaxxing.pool import LastSwitch, Settings
@@ -267,16 +273,35 @@ def test_tick_stays_when_it_cannot_tell_who_is_live(tmp_home: Path) -> None:
     assert w.client.requests == []
 
 
-def test_tick_stays_when_the_active_pointer_is_not_the_live_account(tmp_home: Path) -> None:
-    # Polling would treat `a` as the active account and `b`, the live one, as any other:
-    # an expired token of b's would be refreshed behind Claude Code's back.
+def test_tick_repairs_an_active_pointer_that_is_not_the_live_account(tmp_home: Path) -> None:
+    # `a` is named active and never refreshed, while Claude Code runs as `b`. Staying here
+    # left `a` to lapse and `b` to be refreshed behind Claude Code's back, for good.
+    w = world(tmp_home, {"a": (99, 99), "b": (10, 10)}, live="b")
+    store.write_active(w.root, "a")
+    result = w.tick()
+
+    assert store.read_active(w.root) == "b"
+    assert result.switched is False
+    assert w.port.blob is not None
+    assert credentials.parse_blob(w.port.blob).access_token.reveal() == "b-live"
+
+
+def test_tick_stays_with_the_repair_command_when_the_repair_is_refused(
+    tmp_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     w = world(tmp_home, {"a": (10, 10), "b": (99, 99)}, live="b")
     store.write_active(w.root, "a")
+
+    def refuse(*_: object, **__: object) -> None:
+        raise UsageError("another vibe switch just ran", "vibe switch b")
+
+    monkeypatch.setattr(store, "switch", refuse)
 
     result = w.tick()
 
     assert result.switched is False
     assert result.line.startswith("stay: Claude Code runs as b but vibe's active account is a")
+    assert "repairing it failed: another vibe switch just ran" in result.line
     assert "vibe switch b" in result.line
     assert w.client.requests == []
 

@@ -3,6 +3,19 @@
 Notable changes per release. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`vibe auto tick` no longer stays stuck when `active` and the live login disagree.**
+  After a `claude /login` the pointer named an account Claude Code no longer ran, so that
+  account's token was never refreshed and lapsed (`token expired - vibe leaves the active
+  account's token to Claude Code`) and auto-switching never ran again. The tick now
+  switches onto the live account itself, which repairs the pointer without losing the live
+  login. `CONTRACT.md` §17.
+- A usage `401` or `403` said `run: vibe list`, the command that had just produced it. It now
+  says the token was refused and names `vibe add <alias>`.
+
 ## [0.3.0] - 2026-10-22
 
 ### Added

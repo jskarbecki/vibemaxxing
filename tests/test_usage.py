@@ -381,6 +381,20 @@ def test_a_refused_token_is_an_error_not_frozen_numbers(tmp_home: Path) -> None:
     assert envelope.pool_weeks([view]) == 0.0
 
 
+def test_a_refused_token_names_the_login_that_fixes_it_not_vibe_list(tmp_home: Path) -> None:
+    root = tmp_home / ".vibemaxxing"
+    seed_account(root, "one")
+    client = FakeHttpClient()
+    client.queue(HTTPError(403, b""))
+
+    view = _one(root, client, 1000.0)
+
+    assert view.state is AccountState.ERROR
+    assert view.message == (
+        "the usage endpoint answered HTTP 403 - the token was refused, run: vibe add one"
+    )
+
+
 def test_an_answer_older_than_the_cap_is_not_shown(tmp_home: Path) -> None:
     # A laptop waking offline days later must not present last week's numbers.
     root = tmp_home / ".vibemaxxing"

@@ -1198,7 +1198,9 @@ inside `envelope.collect`, so the CLI, the TUI and the web dashboard all obey it
   ladder lives on disk, so a restart does not reset it, and a `retry_at` further ahead than
   the cap is not obeyed. A success clears it.
 - A 401, 403 or other 4xx sets no backoff and shows no numbers: the token was refused, and
-  freezing the last answer as `ok` would hide that.
+  freezing the last answer as `ok` would hide that. A 401 or 403 says `the usage endpoint
+  answered HTTP <status> - the token was refused, run: vibe add <alias>`; another 4xx names
+  no recovery.
 - A network failure or a body that is not JSON sets no backoff; the next attempt still
   waits for `USAGE_FRESH_S` to run out like any other.
 - A cached answer is neither fresh nor shown when its `fetched_at` is in the future (the
@@ -1403,11 +1405,14 @@ the live account and `active` are still the ones decided about → `store.switch
 `auto.json` → the notification. It prints one line, `stay: <reason>` or
 `switched <from> -> <to>: <reason>`, and exits 0 in every case that is not a bug.
 
-- **The pointer check.** If `active` is not the live account the tick stays, `Claude Code
-  runs as <live> but vibe's active account is <active> - run: vibe switch <live>`. Polling
-  would treat `active` as the account in use and the live one as any other, whose expired
-  token it would then refresh behind Claude Code's back (§8). `vibe switch <live>` repairs
-  the pointer without losing the live login.
+- **The pointer check.** If `active` is not the live account the tick runs `store.switch`
+  onto the live account first, which resyncs the live login into its file and writes the
+  pointer, then carries on. Left as it was, polling would treat `active` as the account in
+  use and the live one as any other, whose expired token it would then refresh behind
+  Claude Code's back (§8), while `active` itself was never refreshed and lapsed. A refused
+  repair (`UsageError`, `NeedsLoginError`, `NotFoundError`) is `stay: Claude Code runs as
+  <live> but vibe's active account is <active> and repairing it failed: <message> - run:
+  vibe switch <live>`.
 - **A refused switch is a stay.** `UsageError`, `NeedsLoginError`, `NetworkError` and
   `NotFoundError` from `ensure_usable` or `store.switch` — a claim held, a login vibe does
   not know, a target that turned out dead or was removed — become `stay: <message>` and are

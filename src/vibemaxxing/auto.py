@@ -252,12 +252,16 @@ def tick(
     active = store.read_active(root)
     if active != live:
         # Polling would treat `active` as the account in use and the live one as any other,
-        # whose expired token it then refreshes behind Claude Code's back. `vibe switch
-        # <live>` repairs the pointer without losing the live login.
-        return _stay(
-            f"Claude Code runs as {live} but vibe's active account is {active or 'unset'}"
-            f" - run: vibe switch {live}"
-        )
+        # whose expired token it then refreshes behind Claude Code's back, while `active`
+        # itself is never refreshed and lapses. Switching to the live account repairs the
+        # pointer without losing the live login; staying instead left it broken for good.
+        try:
+            store.switch(root, live, port, now_s=now_s)
+        except (UsageError, NeedsLoginError, NotFoundError) as exc:
+            return _stay(
+                f"Claude Code runs as {live} but vibe's active account is {active or 'unset'}"
+                f" and repairing it failed: {exc.message} - run: vibe switch {live}"
+            )
 
     last = read_last(root)
     fast: frozenset[str] = frozenset({live}) if _is_hot(root, live, now_s) else frozenset()
