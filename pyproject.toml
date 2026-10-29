@@ -1,6 +1,6 @@
 [project]
 name = "vibemaxxing"
-version = "0.3.0"
+version = "0.3.1"
 description = "Manage several Claude Code accounts and see pooled plan usage across all of them"
 readme = "README.md"
 requires-python = ">=3.11"

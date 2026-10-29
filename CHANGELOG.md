@@ -5,6 +5,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-29
+
 ### Fixed
 
 - **Auto-switch no longer moves onto an account within 5 points of the threshold.** An account
