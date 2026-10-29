@@ -22,6 +22,7 @@ REASON_LIVE_UNKNOWN: Final = "live account unknown"
 
 DEFAULT_THRESHOLD: Final = 99
 DEFAULT_COOLDOWN_S: Final = 900
+CANDIDATE_MARGIN: Final = 5
 MIN_THRESHOLD: Final = 50
 MAX_THRESHOLD: Final = 100
 
@@ -187,7 +188,9 @@ def _fullness(
         return None
     if not 0 <= now_s - reading.updated_at < USAGE_FRESH_S:
         return None
-    if _over(reading.rows, settings.threshold):
+    # An account this close to the threshold would cross it within minutes, and the
+    # cooldown would then keep the next switch from leaving it.
+    if _over(reading.rows, settings.threshold - CANDIDATE_MARGIN):
         return None
     if (
         last is not None

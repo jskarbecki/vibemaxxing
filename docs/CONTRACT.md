@@ -1387,7 +1387,7 @@ first that applies wins:
    lapsed login and refreshed an expiring token, so `ok` is the usability check), not
    excluded, `identified`, not the live account, with an answer fetched within `USAGE_FRESH_S` and not
    from the future, with a known percentage on every `session`/`weekly_all` row and none
-   at or above the threshold, and not the account just left before its `until`.
+   within 5 points of the threshold (at or above `threshold - 5`), and not the account just left before its `until`.
 6. The candidate with the lowest `max(session, weekly_all)` wins, ties by alias; none:
    stay, `no account with headroom`. Percentages are compared across accounts here and
    nowhere else.

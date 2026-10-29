@@ -141,6 +141,18 @@ def test_decide_uses_the_configured_threshold() -> None:
     assert decision.target == "c"
 
 
+def test_decide_skips_a_candidate_within_the_margin_of_the_threshold() -> None:
+    near = decide(
+        [view("a", session=99), view("b", session=94)], settings=ON, live="a", now_s=NOW, last=None
+    )
+    clear = decide(
+        [view("a", session=99), view("b", session=93)], settings=ON, live="a", now_s=NOW, last=None
+    )
+
+    assert (near.action, near.reason) == ("stay", "no account with headroom")
+    assert clear.target == "b"
+
+
 def test_decide_no_candidate() -> None:
     decision = decide(
         [view("a", session=99), view("b", weekly=99), view("c", session=100)],

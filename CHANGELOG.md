@@ -7,6 +7,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Auto-switch no longer moves onto an account within 5 points of the threshold.** An account
+  at 98% passed as headroom, crossed 99% minutes later, and the 15-minute cooldown then held
+  you there at the limit. Such an account is not a candidate; with no other, the tick stays
+  (`no account with headroom`). `CONTRACT.md` §17.
 - **`vibe auto tick` no longer stays stuck when `active` and the live login disagree.**
   After a `claude /login` the pointer named an account Claude Code no longer ran, so that
   account's token was never refreshed and lapsed (`token expired - vibe leaves the active
